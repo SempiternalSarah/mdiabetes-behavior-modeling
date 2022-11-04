@@ -128,7 +128,7 @@ class QuestionHandler:
         questions = questions[["ID"]]
         questions["ID"] = questions["ID"].astype(int)
         self.N = len(questions)
-        with open(self.path_pre+'arogya_content/'+self.map, 'r') as fp:
+        with open(self.path_pre+self.map, 'r') as fp:
             qmap = json.loads(fp.read())
         question_map = {int(k): [] for k in qmap.keys()}
         for k, v in qmap.items():
@@ -159,7 +159,7 @@ class Questionnaire:
     def __init__(self, pref, lang, map): 
         self.pref = pref
         self.lang = lang
-        self.spath = f"arogya_content/{self.pref}_baseline_questionnaires/{map}"
+        self.spath = map
         self.smap = self.read_state_map()
         self.path = os.path.join("arogya_content", f"{self.pref}_baseline_questionnaires", f"mDiabetes-baseline-{self.lang}.xlsx")
         try:
