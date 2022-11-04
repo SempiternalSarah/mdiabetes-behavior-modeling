@@ -1,0 +1,9 @@
+**/.ipynb_checkpoints/
+**/__pycache__/
+data/
+**/arogya_content
+**/local_storage
+**/*.png
+**/img
+**/experiment_output
+**/validation_experiment_output

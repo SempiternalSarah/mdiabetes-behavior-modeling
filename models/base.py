@@ -1,0 +1,113 @@
+import torch.nn as nn
+from torch.autograd import Variable
+import torch
+import torchmetrics
+from models.ModelUtils import *
+import numpy as np
+
+# our categories
+RESP_CATEGORIES = [0, 1, 2, 3]
+N_RESP_CATEGORIES = len(RESP_CATEGORIES)
+
+# base class for models, mostly just utility code, not a real model
+class Base(nn.Module):
+    
+    def __init__(self, 
+                 input_size=36, hidden_size=256, output_size=6,
+                 lossfn="CrossEntropyLoss", loss_kw={},
+                 lr_step_mult=.9, lr_step_epochs=60,
+                 optimizer="Adam", opt_kw={"lr": 1e-3},):
+        # define all inputs to the model
+        # input_size:   # features in input
+        # hidden_size:  # size of hidden layer
+        # output_size   # features in output
+        # lossfn:       # string representing torch loss fn
+        # loss_kw:      # keyword arguments to loss fn
+        # optimizer:    # string represneting torch optimizer
+        # opt_kw:       # keyword arguments to optimizer
+        super().__init__()
+        self.lr_step_mult = lr_step_mult
+        self.lr_step_epochs = lr_step_epochs
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.lossfn, self.loss_kw = lossfn, loss_kw
+        self.optimizer, self.opt_kw = optimizer, opt_kw
+        
+        
+    def forward(self, x):
+        # fake forward function so we can do other stuff
+        return x
+    
+    def predict(self, x):
+        # call forward method but do not collect gradient
+        with torch.no_grad():
+            return self.forward(x)
+        
+    def make_criterion(self):
+        # build the loss function
+        return getattr(torch.nn, self.lossfn)(**self.loss_kw)
+    
+    def make_optimizer(self):
+        # build the optimizer instance
+        optcls = getattr(torch.optim, self.optimizer)
+        opt = optcls(self.parameters(), **self.opt_kw)
+        sched = torch.optim.lr_scheduler.StepLR(opt, step_size=self.lr_step_epochs, gamma=self.lr_step_mult)
+        return opt, sched
+        
+    def _init_hc(self):
+        # initialize the hidden/cell state variables
+        h0 = Variable(torch.zeros(1, self.hidden_size))
+        c0 = Variable(torch.zeros(1, self.hidden_size))
+        return h0, c0
+
+    def train_step(self, pred, y):
+        # One optimization step of our model on 
+        # predictions pred with labels y
+        # make predictions using forward() before calling this function
+        if (self.lossfn == "NDCG"):
+            crit = NDCG
+        else:
+            crit = self.make_criterion()
+        # print(x.shape, y.shape)
+        k = self.fc_q1.out_features
+        pred = pred.view((y.shape[0], k*2))
+        
+        # reshape preds/labels so that one question = one row
+        pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
+        y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
+        # calculate loss, ignoring nonresponses
+        pred = pred[y[:, 0] != 1]
+        y = y[y[:, 0] != 1]
+
+        loss = crit(pred, y[:, 1:])
+        return loss
+            
+
+    def report_scores_min(self, y, pred):
+        k = self.fc_q1.out_features
+        # calculate loss, ignoring nonresponses
+        pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
+        y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
+        pred = pred[y[:, 0] != 1]
+        y = y[y[:, 0] != 1]
+        if (y.numel() > 0):
+            crit = torch.nn.MSELoss()
+            mseloss = crit(pred, y[:, 1:])
+            crit = torch.nn.CrossEntropyLoss()
+            celoss = crit(pred, y[:, 1:])
+            crit = NDCG
+            ndcg = crit(pred, y[:, 1:])
+            crit = MRR
+            mrr = crit(pred, y[:, 1:])
+            sm = torch.nn.Softmax(dim=1)
+            predValues = torch.nn.functional.one_hot(torch.argmax(pred, dim=1), num_classes=k)
+            class_precision, class_recall = torchmetrics.functional.precision_recall(pred.argmax(dim=1), y[:, 1:].argmax(dim=1), average='none', num_classes=k)
+            precision, recall = torchmetrics.functional.precision_recall(pred.argmax(dim=1), y[:, 1:].argmax(dim=1))
+            accuracy = (predValues * y[:, 1:]).sum() / y.shape[0]
+            return np.array([mseloss.item(), celoss.item(), ndcg.item(), mrr.item(), accuracy.item(), precision.item(), recall.item(), class_precision[0].item(), class_precision[1].item(), class_precision[2].item(), class_recall[0].item(), class_recall[1].item(), class_recall[2].item(), y.shape[0]]), ["MSE", "CE", "NDCG", "MRR", "Acc","Prec", "Rec", "Prec1", "Prec2", "Prec3", "Rec1", "Rec2", "Rec3", "ResCount"]
+        else:
+            return [], ["MSE", "CE", "NDCG", "MRR", "Acc", "ResCount"]
+                     
+                     
+            
