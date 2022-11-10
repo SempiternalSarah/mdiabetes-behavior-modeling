@@ -156,12 +156,15 @@ class QuestionHandler:
 class Questionnaire:
     # logic for reading in an individual questionnaire and calculating states
 
-    def __init__(self, pref, lang, map): 
+    def __init__(self, pref, lang, map, endline=False): 
         self.pref = pref
         self.lang = lang
         self.spath = map
         self.smap = self.read_state_map()
-        self.path = os.path.join("arogya_content", f"{self.pref}_baseline_questionnaires", f"mDiabetes-baseline-{self.lang}.xlsx")
+        if endline:
+            self.path = "arogya_content/GAI4SG-Endline-Responses.xlsx"
+        else:
+            self.path = os.path.join("arogya_content", f"{self.pref}_baseline_questionnaires", f"mDiabetes-baseline-{self.lang}.xlsx")
         try:
             self.mat = pd.read_excel(self.path)
         except:
@@ -243,16 +246,17 @@ class Questionnaire:
         self.mat.columns = cols
         if self.pref == "pilot":
             self.mat.drop([0,1], axis=0, inplace=True)
+        self.mat.dropna(subset=['18'], inplace=True)
         self.mat['18'] = self.mat['18'].astype('int64')
         self.mat.drop_duplicates(subset=['18'], inplace=True)
 
 class StatesHandler:
     # handles multiple sets of states (from questionnaires) in one
 
-    def __init__(self, pref="preprod", langs=['english', 'hindi', 'kannada'], map="map.json"):
+    def __init__(self, pref="preprod", langs=['english', 'hindi', 'kannada'], map="map.json", endline=False):
         self.pref = pref
         self.langs = langs
-        self.qhs = [Questionnaire(self.pref, l, map=map) for l in self.langs]
+        self.qhs = [Questionnaire(self.pref, l, map=map, endline=endline) for l in self.langs]
         self.state_max = 3
         self.N_elem = None
         
