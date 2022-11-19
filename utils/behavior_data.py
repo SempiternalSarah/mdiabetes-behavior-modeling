@@ -103,13 +103,13 @@ class BehaviorData:
         d["state"] = d.apply(lambda row: init_states[row["pid"]], axis=1)
 
         # rescale pid values in case we want to use them as features
-        d["pid"] = enc(d["pid"].values.reshape(-1,1)).astype(int)
+        d["pidFeat"] = enc(d["pid"].values.reshape(-1,1)).astype(int)
         # sort by week
         d = d.sort_values(by="week")
         # sort by participant, keeping the week sort
         # result is sorted by participants
         # and participant rows are sorted in increasing week order
-        d = d.sort_values(by="pid", kind="stable")
+        d = d.sort_values(by="pidFeat", kind="stable")
 
         # select top responders based on parameter passed in constructor
         d = self.filter_top_responders(d)
@@ -158,7 +158,7 @@ class BehaviorData:
         feats_to_enc = feats_to_enc.tolist()
         
         if self.include_pid:
-            X = np.array([row["pid"]])
+            X = np.array([row["pidFeat"]])
         else:
             X = np.array([])
         if self.include_state:
