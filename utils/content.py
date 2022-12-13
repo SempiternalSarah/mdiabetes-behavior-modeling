@@ -215,6 +215,13 @@ class Questionnaire:
                         participant_entry = entry.partition(" ")[0]
                     elif method == "count":
                         participant_entry = len(entry.split(","))
+                    elif method == "mult":
+                        participant_entry = len(entry.split(","))
+                        # workaround to consider multiple select question as multiple questions
+                        val += (3*participant_entry)
+                        # high[0] contains the total number of questions
+                        count += high[0] - 1
+                        participant_entry = "Ignored"
                     if participant_entry in low:
                         val += 1
                     elif participant_entry in medium:

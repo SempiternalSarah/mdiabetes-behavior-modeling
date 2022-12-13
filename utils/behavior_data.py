@@ -12,28 +12,43 @@ import torch
 class BehaviorData:
     
     def __init__(self, 
-                 minw=2, maxw=8, 
-                 include_pid=True, include_state=True, 
+                 minw=2, maxw=31, 
+                 include_pid=False, include_state=True, 
                  active_samp=None, 
                  window=3,
                  load=None,
                  train_perc=.8,
-                 expanded_states=False,
+                 expanded_states=True,
                  top_respond_perc=1.0,
-                 full_questionnaire=False):
+                 full_questionnaire=False,
+                 full_sequence=False):
         # minw, maxw: min and max weeks to collect behavior from
         # include_pid: should the participant id be a feature to the model
         # include_state: should the participant state be a feature
         if load is not None:
             self.load(load)
             return
+        # whether to include the full sequence of weekly message/question/response
+        # used for simple (non LSTM) models
+        self.full_sequence = full_sequence
+        # whether to use each question in the questionnaire as features
         self.full_questionnaire = full_questionnaire
+        # what percent of participants to use (taken from the top responders)
         self.top_respond_perc = top_respond_perc
+        # min and max weeks to load data from 
+        # (2 and 31 for the whole dataset, other values probably break things now)
         self.minw, self.maxw = minw, maxw
+        # whether to use participant ID as a feature
+        # not used
         self.include_pid = include_pid
+        # whether to use new (expanded) state mappings
+        # default to true
         self.expanded_states = expanded_states
+        # whether to include state values as features at all
+        # default to true
         self.include_state = include_state
         self.active_samp = active_samp if active_samp is not None else 1
+        # not used
         self.window = window
         self.data = self.build()
         self.features, self.labels = self.encode(self.data)
@@ -49,6 +64,7 @@ class BehaviorData:
         self.chunkedFeatures = torch.tensor_split(self.features, self.nzindices)
         self.chunkedLabels = torch.tensor_split(self.labels, self.nzindices)
 
+    # load state information from the baseline questionnaire
     def load_questionnaire_states(self):
         if (self.full_questionnaire):
             sh = StatesHandler(map="map_individual.json")
@@ -64,11 +80,23 @@ class BehaviorData:
             return int(x)
         participantIDs = torch.tensor(np.loadtxt("arogya_content/all_ai_participants.csv", delimiter=",", skiprows=1, dtype="int64"))
         participantIDs[:, 1].apply_(modify_whatsapp)
+        start_weeks = self.get_participant_start_weeks()
         
         # filter responses to only include ones in the AI participant set
         isect, idIdxs, stateIdxs = np.intersect1d(participantIDs[:, 1], whatsapps, return_indices=True)
         # combine the glific IDs with the states into a dictionary and return
-        return dict(zip(participantIDs[idIdxs, 0].numpy(), states[stateIdxs].numpy()))
+        return dict(zip(participantIDs[idIdxs, 0].numpy(), states[stateIdxs].numpy())), start_weeks
+
+    def get_participant_start_weeks(self):
+        # get start week for each participant
+        startWeeks = {}
+        for week in range(2, 32):
+            pids = np.loadtxt(f"./local_storage/prod/responses/participant_responses_week_{week}.csv", delimiter=",", skiprows=1, dtype="str")
+            pids = pids[:, 0].astype("int64")
+            for pid in pids:
+                if pid not in startWeeks:
+                    startWeeks[pid] = week
+        return startWeeks
 
     
     def filter_top_responders(self, df: pd.DataFrame):
@@ -93,14 +121,26 @@ class BehaviorData:
         d = sd.build(minw=self.minw, maxw=self.maxw)
         enc = OrdinalEncoder().fit_transform
         # load dictionary of pids to states
-        init_states = self.load_questionnaire_states()
+        init_states, start_weeks = self.load_questionnaire_states()
         # filter out rows that aren't supposed to be here
         # unsure where they come from but they aren't listed in the all_ai_participants.csv
         d = d[d["pid"].isin(list(dict.keys(init_states)))]
         # change the computed states to be the initial questionnaire states instead
-        # ideally we'd avoid loading the state data that we aren't going to use but
-        # reworking that data flow is a lot harder than leaving it intact and patching here
         d["state"] = d.apply(lambda row: init_states[row["pid"]], axis=1)
+
+        # adjust week values per participant (their first week should be 0, last 24)
+        def adjustWeek(row):
+            w = row["week"] - start_weeks[row["pid"]]
+            return w
+        d["week"] = d.apply(adjustWeek, axis=1)
+
+        # participants are in for 24 weeks (??)
+        # first response from final group of participants seen week 8
+        # last responses received week 31
+        # THIS SEEMS CORRECT FROM THE DATA BUT POSSIBLE IM MISSING SOMETHING
+
+        # filter out rows after participant completed study
+        d = d[d["week"] < 24]
 
         # rescale pid values in case we want to use them as features
         d["pidFeat"] = enc(d["pid"].values.reshape(-1,1)).astype(int)
@@ -113,6 +153,24 @@ class BehaviorData:
 
         # select top responders based on parameter passed in constructor
         d = self.filter_top_responders(d)
+        # check if we need to build up the full sequence
+        if (self.full_sequence):
+            # method to insert a week's element into all other rows
+            # TODO: FIGURE OUT HOW TO WRITE THIS MORE EFFICIENTLY
+            def construct_week_elem(row, weekno, elem):
+                if ((weekno < row['week']) or (elem != "response" and weekno == row['week'])):
+                    # use full knowledge of the past
+                    temp = d[d["pid"] == row['pid']]
+                    temp = temp[temp["week"] == weekno]
+                    return tuple(temp.iloc[0][elem])
+                else:
+                    # don't use knowledge of the future
+                    return (0, 0)
+            # go through and insert msg/question/response for all weeks as appropriate
+            for elem in ["paction_sids", "pmsg_ids", "qids", "response"]:
+                print(elem)
+                for week in range(24):
+                    d[f"{elem}{week}"] = d.apply(lambda row: construct_week_elem(row, week, elem), axis=1, result_type='reduce')
 
         # record splits between different participants for later
         # basically we want to easily extract individual participant data
@@ -122,19 +180,19 @@ class BehaviorData:
         self.nzindices = d["pid"].diff().to_numpy().nonzero()[0][1:].tolist()
         return d
     
-    def encode(self, data):
+    def encode(self, data: pd.DataFrame):
         # encode the row locations of data
         # data: pd.DataFrame
         X, Y = [], []
         for idx, row in data.iterrows():
-            x, y = self.encode_row(row)
+            x, y = self.encode_row(row, data)
             X.append(x)
             Y.append(y)
         X, Y = np.stack(X), np.stack(Y)
         print(X.shape, Y.shape)
         return torch.tensor(X).float(), torch.tensor(Y).float()
                 
-    def encode_row(self, row):
+    def encode_row(self, row, df):
         # here we take a row from the main behavior dataset and 
         # encode all of the features for our model
         # Features:
@@ -154,7 +212,23 @@ class BehaviorData:
             vec = np.zeros(l)
             vec[a] = 1
             return vec
-        feats_to_enc = np.array(row[["paction_sids", "pmsg_ids", "qids"]].values)
+
+        elems = []
+        # max value for each (state elem, message id, question id) for padding
+        ls = []
+        if (self.expanded_states):
+            maxSVal = 17
+        else:
+            maxSVal = 5
+        if (self.full_sequence):
+            for week in range(24):
+                for elem in ["paction_sids", "pmsg_ids", "qids"]:
+                    elems.append(f"{elem}{week}")
+                ls += [maxSVal,57,32]
+        else:
+            elems = ["paction_sids", "pmsg_ids", "qids"]
+            ls = [maxSVal,57,32]
+        feats_to_enc = np.array(row[elems].values)
         feats_to_enc = feats_to_enc.tolist()
         
         if self.include_pid:
@@ -163,12 +237,11 @@ class BehaviorData:
             X = np.array([])
         if self.include_state:
             X = np.append(X, row["state"])
-        # max value for each (state elem, message id, question id) for padding
-        if (self.expanded_states):
-            maxSVal = 17
-        else:
-            maxSVal = 5
-        ls = [maxSVal,57,32]
+
+        if self.full_sequence:
+            for week in range(24):
+                X = np.append(X, row[f"response{week}"])
+        
         for j in range(len(feats_to_enc)):
             for k in range(len(feats_to_enc[j])):
                 # encode the feature and add it to our feat vector
@@ -198,5 +271,5 @@ class BehaviorData:
     @property
     def dimensions(self):
         # helper to get the x and y input dimensions
-        return self.features.shape[1], self.labels.shape[1] - 1
+        return self.features.shape[1], self.labels.shape[1] - 2
         

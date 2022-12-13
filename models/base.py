@@ -69,8 +69,8 @@ class Base(nn.Module):
             crit = NDCG
         else:
             crit = self.make_criterion()
-        # print(x.shape, y.shape)
-        k = self.fc_q1.out_features
+        # print(pred.shape, y.shape)
+        k = self.output_size // 2
         pred = pred.view((y.shape[0], k*2))
         
         # reshape preds/labels so that one question = one row
@@ -79,13 +79,17 @@ class Base(nn.Module):
         # calculate loss, ignoring nonresponses
         pred = pred[y[:, 0] != 1]
         y = y[y[:, 0] != 1]
+        # smooth labels for hopefully better overall results
+        y[y[:, 1] == 1] += torch.tensor([[0, -1/3, 1/3, 0]])
+        y[y[:, 2] == 1] += torch.tensor([[0, 1/4, -1/2, 1/4]])
+        y[y[:, 3] == 1] += torch.tensor([[0, 0, 1/3, -1/3]])
 
         loss = crit(pred, y[:, 1:])
         return loss
             
 
     def report_scores_min(self, y, pred):
-        k = self.fc_q1.out_features
+        k = self.output_size // 2
         # calculate loss, ignoring nonresponses
         pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
         y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
@@ -105,7 +109,15 @@ class Base(nn.Module):
             class_precision, class_recall = torchmetrics.functional.precision_recall(pred.argmax(dim=1), y[:, 1:].argmax(dim=1), average='none', num_classes=k)
             precision, recall = torchmetrics.functional.precision_recall(pred.argmax(dim=1), y[:, 1:].argmax(dim=1))
             accuracy = (predValues * y[:, 1:]).sum() / y.shape[0]
-            return np.array([mseloss.item(), celoss.item(), ndcg.item(), mrr.item(), accuracy.item(), precision.item(), recall.item(), class_precision[0].item(), class_precision[1].item(), class_precision[2].item(), class_recall[0].item(), class_recall[1].item(), class_recall[2].item(), y.shape[0]]), ["MSE", "CE", "NDCG", "MRR", "Acc","Prec", "Rec", "Prec1", "Prec2", "Prec3", "Rec1", "Rec2", "Rec3", "ResCount"]
+            # filter predicted classes by true class
+            pred1 = predValues[y[:, 1] == 1]
+            pred2 = predValues[y[:, 2] == 1]
+            pred3 = predValues[y[:, 3] == 1]
+            # per class accuracy
+            acc1 = (pred1[:, 0].sum()) / pred1.shape[0]
+            acc2 = (pred2[:, 1].sum()) / pred2.shape[0]
+            acc3 = (pred3[:, 2].sum()) / pred3.shape[0]
+            return np.array([mseloss.item(), celoss.item(), ndcg.item(), mrr.item(), accuracy.item(), precision.item(), recall.item(), acc1, acc2, acc3, class_precision[0].item(), class_precision[1].item(), class_precision[2].item(), class_recall[0].item(), class_recall[1].item(), class_recall[2].item(), pred1.shape[0], pred2.shape[0], pred3.shape[0]]), ["MSE", "CE", "NDCG", "MRR", "Acc","Prec", "Rec", "Acc1", "Acc2", "Acc3", "Prec1", "Prec2", "Prec3", "Rec1", "Rec2", "Rec3", "Count1", "Count2", "Count3"]
         else:
             return [], ["MSE", "CE", "NDCG", "MRR", "Acc", "ResCount"]
                      
