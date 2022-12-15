@@ -159,6 +159,7 @@ class Experiment:
         loss = [l1.item() for l1 in loss]
         return loss
     
+    # update feature modifications for both train and test data
     def update_all_feature_mods(self):
         with torch.no_grad():
             for set in [self.bd.train, self.bd.test]:

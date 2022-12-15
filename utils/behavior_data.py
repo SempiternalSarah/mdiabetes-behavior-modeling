@@ -96,15 +96,15 @@ class BehaviorData:
             return self.chunkedFeatures[idx]
 
     # set feature modifications for all participants
-    def set_feature_response_mods(self, idx, preds):
+    def set_feature_response_mods(self, indx, preds):
         # do nothing if we're not using responses as features
         # modifications will remain 0
         if (not self.full_sequence or not self.insert_predictions):
             return
         # set up our feature modifications
-        mods = np.zeros_like(self.chunkedFeatures[idx])
+        mods = np.zeros_like(self.chunkedFeatures[indx].numpy())
         # iterate through each week (row of this participants data)
-        for i, weekRow in enumerate(self.chunkedFeatures[idx]):
+        for i, weekRow in enumerate(self.chunkedFeatures[indx]):
             # iterate through the responses of weeks before this one
             for j in range(i):
                 # get index of this week's response to q1
@@ -118,6 +118,7 @@ class BehaviorData:
                             # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
                         else:
                             mods[i][idx + offset] = 2 + np.argmax(preds[j][(self.dimensions[1]//2):])
+        self.responseMods[indx] = mods
                     
 
 
