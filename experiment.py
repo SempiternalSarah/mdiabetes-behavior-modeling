@@ -189,12 +189,12 @@ class Experiment:
 
             # record metrics every rec_every epochs
             if (e%rec_every) == 0 or e == epochs - 1:
-                print(f'{e:}\t', lh)
                 stored_losses.append(lh)
                 metrics, labels = self.report_scores_train()
                 train_metrics.append(metrics)
                 tmetrics, tlabels = self.report_scores()
                 test_metrics.append(tmetrics)
+                print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}")
             sched.step()
         return np.array(stored_losses), np.array(train_metrics), np.array(test_metrics), labels
 
