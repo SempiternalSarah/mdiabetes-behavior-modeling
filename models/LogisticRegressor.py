@@ -14,7 +14,9 @@ class LogisticRegressor(Base):
         # output_size: size of output label of data
         super().__init__(*args, **kw)
         self.linear = nn.Linear(self.input_size, self.output_size)
-        self.sigmoid = nn.Sigmoid()
+        self.softmax = nn.Softmax(-1)
     
     def forward(self, x):
-       return self.sigmoid(self.linear(x))
+        preds = self.linear(x)
+        # softmax per question, recombine
+        return torch.cat([self.softmax(preds[:, 0:(self.output_size//2)]), self.softmax(preds[:, (self.output_size//2):])], -1)

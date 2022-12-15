@@ -16,7 +16,6 @@ class BehaviorData:
                  include_pid=False, include_state=True, 
                  active_samp=None, 
                  window=3,
-                 load=None,
                  train_perc=.8,
                  expanded_states=True,
                  top_respond_perc=1.0,
@@ -25,9 +24,7 @@ class BehaviorData:
         # minw, maxw: min and max weeks to collect behavior from
         # include_pid: should the participant id be a feature to the model
         # include_state: should the participant state be a feature
-        if load is not None:
-            self.load(load)
-            return
+
         # whether to include the full sequence of weekly message/question/response
         # used for simple (non LSTM) models
         self.full_sequence = full_sequence
@@ -50,9 +47,30 @@ class BehaviorData:
         self.active_samp = active_samp if active_samp is not None else 1
         # not used
         self.window = window
-        self.data = self.build()
-        self.features, self.labels = self.encode(self.data)
+        # calculate file name for storing/loading data
+        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.expanded_states}{self.full_questionnaire}{self.full_sequence}{self.top_respond_perc}.pickle"
+
+        # data saved - we can just load it
+        if os.path.exists(self.fname):
+            self.load()
+        else:
+            self.data = self.build()
+            self.features, self.labels, self.featureList = self.encode(self.data)
+            self.save()
+        # find index of first response value so we don't have to compute this again
+        # used to replace non responses with the model's prediction
+        for idx, feature in enumerate(self.featureList):
+            if (feature == "response0_1"):
+                self.responseIdx = idx
+
         self.splitData(train_perc)
+
+        # set up our response modifications
+        # these will be used to replace non responses with the model's prediction
+        self.responseMods = {}
+        for idx in self.train:
+            self.responseMods[idx] = np.zeros_like(self.chunkedFeatures[idx])
+
         
     # splits data into test and training
     def splitData(self, train_perc):
@@ -63,6 +81,37 @@ class BehaviorData:
     
         self.chunkedFeatures = torch.tensor_split(self.features, self.nzindices)
         self.chunkedLabels = torch.tensor_split(self.labels, self.nzindices)
+
+
+    # return feature modifications for a participant
+    def get_feature_response_mods(self, idx):
+        return self.responseMods[idx]
+
+    # set feature modifications for all participants
+    def set_feature_response_mods(self, idx, preds):
+        # do nothing if we're not using responses as features
+        # modifications will remain 0
+        if (not self.full_sequence):
+            return
+        # set up our feature modifications
+        mods = np.zeros_like(self.chunkedFeatures[idx])
+        # iterate through each week (row of this participants data)
+        for i, weekRow in enumerate(self.chunkedFeatures[idx]):
+            # iterate through the responses of weeks before this one
+            for j in range(i):
+                # get index of this week's response to q1
+                idx = self.responseIdx + (2 * j)
+                for offset in range(2):
+                    if weekRow[idx + offset] == -1:
+                        # first question
+                        if (offset == 0):
+                            # calculate most likely predicted class and save to use as the feature
+                            mods[i][idx + offset] = 2 + np.argmax(preds[j][0:(self.dimensions[1]//2)])
+                            # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
+                        else:
+                            mods[i][idx + offset] = 2 + np.argmax(preds[j][(self.dimensions[1]//2):])
+                    
+
 
     # load state information from the baseline questionnaire
     def load_questionnaire_states(self):
@@ -162,7 +211,17 @@ class BehaviorData:
                     # use full knowledge of the past
                     temp = d[d["pid"] == row['pid']]
                     temp = temp[temp["week"] == weekno]
-                    return tuple(temp.iloc[0][elem])
+                    # set non response to -1 to distinguish from unknown (future) response
+                    if (elem == "response" and 0 in temp.iloc[0][elem]):
+                        vals = []
+                        for val in temp.iloc[0][elem]:
+                            if (val == 0):
+                                vals.append(-1)
+                            else:
+                                vals.append(val)
+                        return tuple(vals)
+                    else:
+                        return tuple(temp.iloc[0][elem])
                 else:
                     # don't use knowledge of the future
                     return (0, 0)
@@ -185,14 +244,14 @@ class BehaviorData:
         # data: pd.DataFrame
         X, Y = [], []
         for idx, row in data.iterrows():
-            x, y = self.encode_row(row, data)
+            x, y, featureList = self.encode_row(row)
             X.append(x)
             Y.append(y)
         X, Y = np.stack(X), np.stack(Y)
-        print(X.shape, Y.shape)
-        return torch.tensor(X).float(), torch.tensor(Y).float()
+        print(X.shape, Y.shape, len(featureList))
+        return torch.tensor(X).float(), torch.tensor(Y).float(), np.array(featureList)
                 
-    def encode_row(self, row, df):
+    def encode_row(self, row):
         # here we take a row from the main behavior dataset and 
         # encode all of the features for our model
         # Features:
@@ -212,6 +271,8 @@ class BehaviorData:
             vec = np.zeros(l)
             vec[a] = 1
             return vec
+
+        featureList = []
 
         elems = []
         # max value for each (state elem, message id, question id) for padding
@@ -233,40 +294,41 @@ class BehaviorData:
         
         if self.include_pid:
             X = np.array([row["pidFeat"]])
+            featureList.append("pidFeat")
         else:
             X = np.array([])
         if self.include_state:
             X = np.append(X, row["state"])
+            featureList += ["state"] * len(row["state"])
 
         if self.full_sequence:
             for week in range(24):
                 X = np.append(X, row[f"response{week}"])
+                featureList += [f"response{week}_1", f"response{week}_2"]
         
         for j in range(len(feats_to_enc)):
             for k in range(len(feats_to_enc[j])):
                 # encode the feature and add it to our feat vector
                 bin_feat = _padded_binary(feats_to_enc[j][k],ls[j])
                 X = np.append(X, bin_feat)
+                featureList += [f"{elems[j]}_{k}"] * len(bin_feat)
         # responses are the labels
         Y = np.array([])
         for i,r in enumerate(row["response"]):
             Y = np.append(Y, _onehot(r,4))
-        return X, Y
+        return X, Y, featureList
     
-    def save(self, p):
-        out = {"minw": self.minw, "maxw": self.maxw, "include_pid": self.include_pid,
-               "include_state": self.include_state, "active_samp": self.active_samp,
-               "window": self.window, "data": self.data}
-        save(out, p)
+    def save(self):
+        out = {"data": self.data, "features": self.features, "labels":self.labels, "featureList": self.featureList, "nzIndices": self.nzindices}
+        save(out, self.fname)
         
-    def load(self, p):
-        d = load(p)
-        self.minw, self.maxw = d["minw"], d["maxw"]
-        self.include_pid = d["include_pid"]
-        self.include_state = d["include_state"]
-        self.active_samp = d["active_samp"]
-        self.window = d["window"]
+    def load(self):
+        d = load(self.fname)
+        self.features = d["features"]
         self.data = d["data"]
+        self.labels = d["labels"]
+        self.featureList = d["featureList"]
+        self.nzindices = d["nzIndices"]
         
     @property
     def dimensions(self):

@@ -5,7 +5,7 @@ import importlib
 
 class Experiment:
     
-    def __init__(self, data_kw={}, model="BasicLSTM", model_kw={}, train_kw={}, numValFolds=5):
+    def __init__(self, data_kw={}, model="BasicLSTM", model_kw={}, train_kw={}, numValFolds=5, useLabelMods=True, epochsToUpdateLabelMods=5):
         # data_kw:  dict of keyword arguments to BehaviorData instance
         # model_kw: dict of keyword arguments for Model instance
         # train_kw: dict of keyword arguments for training loop
@@ -14,6 +14,12 @@ class Experiment:
         self.model_name = model
         self.model_kw = model_kw
         self.train_kw = train_kw
+        # similar to DQN - update label modifications based on network predictions
+        # every x epochs
+        # used to replace non responses with predicted responses
+        self.epochsToUpdateLabelMods = epochsToUpdateLabelMods
+        self.useLabelMods = useLabelMods
+
         self.bd = BehaviorData(**data_kw)
         self.model = self._get_model()(
             input_size=self.bd.dimensions[0],
@@ -165,7 +171,7 @@ class Experiment:
         epochs = self.train_kw.get("epochs", 1)
         rec_every = self.train_kw.get("rec_every", 5)
         for e in range(epochs):
-            lh = self.train_epoch(opt)
+            lh = self.train_epoch(opt, e)
             if (e%rec_every) == 0 or e == epochs - 1:
                 print(f'{e:}\t', lh)
                 stored_losses.append(lh)
@@ -218,7 +224,7 @@ class Experiment:
                 grads = torch.cat([grads, grad], dim = 0)
         return grads.mean(dim=0)
     
-    def train_epoch(self, opt):
+    def train_epoch(self, opt, epoch):
         # feed through training data one time
         loss = []
         preds = None
@@ -227,10 +233,25 @@ class Experiment:
         for indx in self.bd.train:
             # extract one participants data
             data = self.bd.chunkedFeatures[indx]
+            # add predicted responses to replace non responses as appropriate
+            if (self.useLabelMods):
+                with torch.no_grad():
+                    data += self.bd.get_feature_response_mods(indx)
             label = self.bd.chunkedLabels[indx]
-            # important to note that we are not using batching here
+
+            # important to note that we are not using batching here (FOR THE LSTM)
             # one participants data is ONE sequence
+            # for non LSTM models, the participants data is batched by week
+            # no special trick here - the dimensions work to be non batched in LSTM (as desired)
+            # and batched by week for non LSTM models (also as desired)
             pred = self.model.forward(data)
+
+            # update our feature modifications per the predictions
+            # don't update mods at timestep 0
+            if (self.useLabelMods and epoch > 0 and epoch % self.epochsToUpdateLabelMods == 0):
+                with torch.no_grad():
+                    self.bd.set_feature_response_mods(indx, pred.detach().numpy())
+
             # we have to predict with one sequence at a time and then
             # stitch together the predictions and labels to calculate our metrics
             if (preds == None):
