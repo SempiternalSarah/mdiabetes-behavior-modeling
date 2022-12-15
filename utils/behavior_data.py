@@ -20,7 +20,8 @@ class BehaviorData:
                  expanded_states=True,
                  top_respond_perc=1.0,
                  full_questionnaire=False,
-                 full_sequence=False):
+                 full_sequence=False,
+                 insert_predictions=False):
         # minw, maxw: min and max weeks to collect behavior from
         # include_pid: should the participant id be a feature to the model
         # include_state: should the participant state be a feature
@@ -28,6 +29,8 @@ class BehaviorData:
         # whether to include the full sequence of weekly message/question/response
         # used for simple (non LSTM) models
         self.full_sequence = full_sequence
+        # whether to use feature modifications to replace non responses with predicted responses
+        self.insert_predictions = insert_predictions
         # whether to use each question in the questionnaire as features
         self.full_questionnaire = full_questionnaire
         # what percent of participants to use (taken from the top responders)
@@ -70,6 +73,8 @@ class BehaviorData:
         self.responseMods = {}
         for idx in self.train:
             self.responseMods[idx] = np.zeros_like(self.chunkedFeatures[idx])
+        for idx in self.test:
+            self.responseMods[idx] = np.zeros_like(self.chunkedFeatures[idx])
 
         
     # splits data into test and training
@@ -83,15 +88,18 @@ class BehaviorData:
         self.chunkedLabels = torch.tensor_split(self.labels, self.nzindices)
 
 
-    # return feature modifications for a participant
-    def get_feature_response_mods(self, idx):
-        return self.responseMods[idx]
+    # get features for a participant
+    def get_features(self, idx):
+        if (self.full_sequence and self.insert_predictions):
+            return self.chunkedFeatures[idx] + self.responseMods[idx]
+        else:
+            return self.chunkedFeatures[idx]
 
     # set feature modifications for all participants
     def set_feature_response_mods(self, idx, preds):
         # do nothing if we're not using responses as features
         # modifications will remain 0
-        if (not self.full_sequence):
+        if (not self.full_sequence or not self.insert_predictions):
             return
         # set up our feature modifications
         mods = np.zeros_like(self.chunkedFeatures[idx])

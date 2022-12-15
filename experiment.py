@@ -5,7 +5,7 @@ import importlib
 
 class Experiment:
     
-    def __init__(self, data_kw={}, model="BasicLSTM", model_kw={}, train_kw={}, numValFolds=5, useLabelMods=True, epochsToUpdateLabelMods=5):
+    def __init__(self, data_kw={}, model="BasicLSTM", model_kw={}, train_kw={}, numValFolds=5, epochsToUpdateLabelMods=5):
         # data_kw:  dict of keyword arguments to BehaviorData instance
         # model_kw: dict of keyword arguments for Model instance
         # train_kw: dict of keyword arguments for training loop
@@ -18,7 +18,6 @@ class Experiment:
         # every x epochs
         # used to replace non responses with predicted responses
         self.epochsToUpdateLabelMods = epochsToUpdateLabelMods
-        self.useLabelMods = useLabelMods
 
         self.bd = BehaviorData(**data_kw)
         self.model = self._get_model()(
@@ -107,7 +106,7 @@ class Experiment:
         preds = None
         for indx in toUse:
             # extract one participants data
-            data = self.bd.chunkedFeatures[indx]
+            data  = self.bd.get_features(indx)
             label = self.bd.chunkedLabels[indx]
             # important to note that we are not using batching here
             # one participants data is ONE sequence
@@ -138,7 +137,7 @@ class Experiment:
         opt.zero_grad()
         for indx in trainSet:
             # extract one participants data
-            data = self.bd.chunkedFeatures[indx]
+            data  = self.bd.get_features(indx)
             label = self.bd.chunkedLabels[indx]
             # important to note that we are not using batching here
             # one participants data is ONE sequence
@@ -160,6 +159,15 @@ class Experiment:
         loss = [l1.item() for l1 in loss]
         return loss
     
+    def update_all_feature_mods(self):
+        with torch.no_grad():
+            for set in [self.bd.train, self.bd.test]:
+                for indx in set:
+                    # extract one participants data
+                    data = self.bd.get_features(indx)
+                    pred = self.model.forward(data)
+                    self.bd.set_feature_response_mods(indx, pred.detach().numpy())
+
         
     def train(self):
         # Loop over data and train model on each batch
@@ -171,7 +179,14 @@ class Experiment:
         epochs = self.train_kw.get("epochs", 1)
         rec_every = self.train_kw.get("rec_every", 5)
         for e in range(epochs):
-            lh = self.train_epoch(opt, e)
+
+            lh = self.train_epoch(opt)
+
+            # update our predictions as features when appropriate
+            if (e > 0 and e % self.epochsToUpdateLabelMods == 0) or e == epochs - 1:
+                self.update_all_feature_mods()
+
+            # record metrics every rec_every epochs
             if (e%rec_every) == 0 or e == epochs - 1:
                 print(f'{e:}\t', lh)
                 stored_losses.append(lh)
@@ -196,7 +211,7 @@ class Experiment:
         opt = torch.optim.SGD(self.bd.chunkedFeatures, lr=1)
         for indx in self.bd.train:
             # extract one participants data
-            data = self.bd.chunkedFeatures[indx]
+            data  = self.bd.get_features(indx)
             data.requires_grad = True
             label = self.bd.chunkedLabels[indx]
             # important to note that we are not using batching here
@@ -215,7 +230,7 @@ class Experiment:
         loss1.backward()
         grads = None
         for indx in self.bd.train:
-            grad = self.bd.chunkedFeatures[indx].grad
+            grad  = self.bd.get_features(indx).grad
             # we have to predict with one sequence at a time and then
             # stitch together the predictions and labels to calculate our metrics
             if (grads == None):
@@ -224,7 +239,7 @@ class Experiment:
                 grads = torch.cat([grads, grad], dim = 0)
         return grads.mean(dim=0)
     
-    def train_epoch(self, opt, epoch):
+    def train_epoch(self, opt):
         # feed through training data one time
         loss = []
         preds = None
@@ -232,11 +247,7 @@ class Experiment:
         opt.zero_grad()
         for indx in self.bd.train:
             # extract one participants data
-            data = self.bd.chunkedFeatures[indx]
-            # add predicted responses to replace non responses as appropriate
-            if (self.useLabelMods):
-                with torch.no_grad():
-                    data += self.bd.get_feature_response_mods(indx)
+            data  = self.bd.get_features(indx)
             label = self.bd.chunkedLabels[indx]
 
             # important to note that we are not using batching here (FOR THE LSTM)
@@ -245,12 +256,7 @@ class Experiment:
             # no special trick here - the dimensions work to be non batched in LSTM (as desired)
             # and batched by week for non LSTM models (also as desired)
             pred = self.model.forward(data)
-
-            # update our feature modifications per the predictions
-            # don't update mods at timestep 0
-            if (self.useLabelMods and epoch > 0 and epoch % self.epochsToUpdateLabelMods == 0):
-                with torch.no_grad():
-                    self.bd.set_feature_response_mods(indx, pred.detach().numpy())
+            
 
             # we have to predict with one sequence at a time and then
             # stitch together the predictions and labels to calculate our metrics
@@ -274,7 +280,7 @@ class Experiment:
         evals = []
         for indx in self.bd.test:
             # extract one participants data
-            data = self.bd.chunkedFeatures[indx]
+            data  = self.bd.get_features(indx)
             label = self.bd.chunkedLabels[indx]
             # important to note that we are not using batching here
             # one participants data is ONE sequence
@@ -288,7 +294,7 @@ class Experiment:
             preds, labels = None, None
             for indx in self.bd.test:
                 # extract one participants data
-                data = self.bd.chunkedFeatures[indx]
+                data = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
                 pred = self.model.predict(data)
                 if (preds == None):
@@ -305,7 +311,7 @@ class Experiment:
             scores = []
             for indx in self.bd.test:
                 # extract one participants data
-                data = self.bd.chunkedFeatures[indx]
+                data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
                 pred = self.model.predict(data)
                 score, label = self.model.report_scores_min(label, pred)
@@ -318,7 +324,7 @@ class Experiment:
             scores = []
             for indx in self.bd.train:
                 # extract one participants data
-                data = self.bd.chunkedFeatures[indx]
+                data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
                 pred = self.model.predict(data)
                 score, label = self.model.report_scores_min(label, pred)
@@ -332,7 +338,7 @@ class Experiment:
             preds, labels = None, None
             for indx in self.bd.train:
                 # extract one participants data
-                data = self.bd.chunkedFeatures[indx]
+                data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
                 pred = self.model.predict(data)
                 if (preds == None):
@@ -349,7 +355,7 @@ class Experiment:
             preds, labels = None, None
             for indx in subset:
                 # extract one participants data
-                data = self.bd.chunkedFeatures[indx]
+                data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
                 pred = self.model.predict(data)
                 if (preds == None):
