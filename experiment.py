@@ -184,8 +184,9 @@ class Experiment:
             lh = self.train_epoch(opt)
 
             # update our predictions as features when appropriate
-            if (e > 0 and e % self.epochsToUpdateLabelMods == 0) or e == epochs - 1:
-                self.update_all_feature_mods()
+            if (self.bd.insert_predictions):
+                if (e > 0 and e % self.epochsToUpdateLabelMods == 0) or e == epochs - 1:
+                    self.update_all_feature_mods()
 
             # record metrics every rec_every epochs
             if (e%rec_every) == 0 or e == epochs - 1:
