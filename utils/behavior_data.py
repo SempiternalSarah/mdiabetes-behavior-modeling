@@ -21,11 +21,12 @@ class BehaviorData:
                  top_respond_perc=1.0,
                  full_questionnaire=False,
                  full_sequence=False,
-                 insert_predictions=False):
+                 insert_predictions=False,
+                 one_hot_response_features=True):
         # minw, maxw: min and max weeks to collect behavior from
         # include_pid: should the participant id be a feature to the model
         # include_state: should the participant state be a feature
-
+        self.oneHotResponseFeatures = one_hot_response_features
         # whether to include the full sequence of weekly message/question/response
         # used for simple (non LSTM) models
         self.full_sequence = full_sequence
@@ -47,11 +48,12 @@ class BehaviorData:
         # whether to include state values as features at all
         # default to true
         self.include_state = include_state
+        # not used
         self.active_samp = active_samp if active_samp is not None else 1
         # not used
         self.window = window
         # calculate file name for storing/loading data
-        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.expanded_states}{self.full_questionnaire}{self.full_sequence}{self.top_respond_perc}.pickle"
+        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.expanded_states}{self.full_questionnaire}{self.full_sequence}{self.oneHotResponseFeatures}{self.top_respond_perc}.pickle"
 
         # data saved - we can just load it
         if os.path.exists(self.fname):
@@ -81,8 +83,8 @@ class BehaviorData:
     def splitData(self, train_perc):
         numParticipants = len(self.nzindices)
         numTrainParticipants = int(train_perc * numParticipants)
-        self.train = np.random.choice(numParticipants, numTrainParticipants)
-        self.test = [idx for idx in range(numParticipants) if idx not in self.train]
+        self.train = np.random.choice(numParticipants, numTrainParticipants, replace=False)
+        self.test = np.array([idx for idx in range(numParticipants) if idx not in self.train])
     
         self.chunkedFeatures = torch.tensor_split(self.features, self.nzindices)
         self.chunkedLabels = torch.tensor_split(self.labels, self.nzindices)
@@ -108,16 +110,23 @@ class BehaviorData:
             # iterate through the responses of weeks before this one
             for j in range(i):
                 # get index of this week's response to q1
-                idx = self.responseIdx + (2 * j)
-                for offset in range(2):
-                    if weekRow[idx + offset] == -1:
-                        # first question
-                        if (offset == 0):
-                            # calculate most likely predicted class and save to use as the feature
-                            mods[i][idx + offset] = 2 + np.argmax(preds[j][0:(self.dimensions[1]//2)])
-                            # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
-                        else:
-                            mods[i][idx + offset] = 2 + np.argmax(preds[j][(self.dimensions[1]//2):])
+                if (self.oneHotResponseFeatures):
+                    idx = self.responseIdx + (6 * j)
+                    for offset in range(2):
+                        curIdx = idx + 3*offset
+                        if weekRow[curIdx] == -1:
+                            mods[i][curIdx:curIdx + 3] = 1 + preds[j][offset*3:(3*offset)+3]
+                else:
+                    idx = self.responseIdx + (2 * j)
+                    for offset in range(2):
+                        if weekRow[idx + offset] == -1:
+                            # first question
+                            if (offset == 0):
+                                # calculate most likely predicted class and save to use as the feature
+                                mods[i][idx + offset] = 2 + np.argmax(preds[j][0:(self.dimensions[1]//2)])
+                                # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
+                            else:
+                                mods[i][idx + offset] = 2 + np.argmax(preds[j][(self.dimensions[1]//2):])
         self.responseMods[indx] = mods
                     
 
@@ -312,8 +321,27 @@ class BehaviorData:
 
         if self.full_sequence:
             for week in range(24):
-                X = np.append(X, row[f"response{week}"])
-                featureList += [f"response{week}_1", f"response{week}_2"]
+                if (self.oneHotResponseFeatures):
+                    def onehot_response(a, l):
+                        # unchanged if future/unknown response
+                        vec = np.zeros(l)
+                        if (a > 0):
+                            # 1 0 0 for class 1
+                            # 0 1 0 for class 2
+                            # 0 0 1 for class 3
+                            vec[a - 1] = 1
+                        elif (a < 0):
+                            # -1 -1 -1 for non response
+                            vec -= 1
+                        return vec
+                    for r in row[f"response{week}"]:
+                        encoding = onehot_response(r, 3)
+                        X = np.append(X, encoding)
+                    featureList += [f"response{week}_1"] * 3
+                    featureList += [f"response{week}_2"] * 3
+                else:
+                    X = np.append(X, row[f"response{week}"])
+                    featureList += [f"response{week}_1", f"response{week}_2"]
         
         for j in range(len(feats_to_enc)):
             for k in range(len(feats_to_enc[j])):

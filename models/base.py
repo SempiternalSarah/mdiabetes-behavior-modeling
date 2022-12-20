@@ -16,7 +16,8 @@ class Base(nn.Module):
                  input_size=36, hidden_size=256, output_size=6,
                  lossfn="CrossEntropyLoss", loss_kw={},
                  lr_step_mult=.9, lr_step_epochs=60,
-                 optimizer="Adam", opt_kw={"lr": 1e-3},):
+                 optimizer="Adam", opt_kw={"lr": 1e-3},
+                 labelSmoothPerc = 0.0, gaussianNoiseStd = 0.0):
         # define all inputs to the model
         # input_size:   # features in input
         # hidden_size:  # size of hidden layer
@@ -33,6 +34,8 @@ class Base(nn.Module):
         self.output_size = output_size
         self.lossfn, self.loss_kw = lossfn, loss_kw
         self.optimizer, self.opt_kw = optimizer, opt_kw
+        self.labelSmoothPerc = labelSmoothPerc
+        self.gaussianNoiseStd = gaussianNoiseStd
         
         
     def forward(self, x):
@@ -80,9 +83,14 @@ class Base(nn.Module):
         pred = pred[y[:, 0] != 1]
         y = y[y[:, 0] != 1]
         # smooth labels for hopefully better overall results
-        y[y[:, 1] == 1] += torch.tensor([[0, -1/3, 1/3, 0]])
-        y[y[:, 2] == 1] += torch.tensor([[0, 1/4, -1/2, 1/4]])
-        y[y[:, 3] == 1] += torch.tensor([[0, 0, 1/3, -1/3]])
+        l = self.labelSmoothPerc
+        if (l > 0):
+            y[y[:, 1] == 1] += torch.tensor([[0, -l, l, 0]])
+            y[y[:, 2] == 1] += torch.tensor([[0, 2*l/3, -4*l/3, 2*l/3]])
+            y[y[:, 3] == 1] += torch.tensor([[0, 0, l, -l]])
+        g = self.gaussianNoiseStd
+        if (g > 0):
+            y += torch.normal(mean=torch.zeros_like(y), std=g * torch.ones_like(y))
 
         loss = crit(pred, y[:, 1:])
         return loss
