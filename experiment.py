@@ -52,6 +52,10 @@ class Experiment:
         rep = {k: v for k,v in rep.items() if "_kw" in k}
         train_loss, train_metrics, test_metrics, labels = self.train()
         # results = self.evaluate()
+        epochs = self.train_kw.get("epochs", 1)
+        rec_every = self.train_kw.get("rec_every", 5)
+        rep["rec_epochs"] = np.arange(start=0, stop=epochs, step=rec_every)
+        rep["rec_epochs"] = np.append(rep["rec_epochs"], epochs - 1)
         rep["params"] = {
             "data_kw": self.data_kw,
             "model_name": self.model_name,
