@@ -22,7 +22,8 @@ class BehaviorData:
                  full_questionnaire=False,
                  full_sequence=False,
                  insert_predictions=False,
-                 one_hot_response_features=True):
+                 one_hot_response_features=True,
+                 response_feature_noise=.05):
         # minw, maxw: min and max weeks to collect behavior from
         # include_pid: should the participant id be a feature to the model
         # include_state: should the participant state be a feature
@@ -52,6 +53,8 @@ class BehaviorData:
         self.active_samp = active_samp if active_samp is not None else 1
         # not used
         self.window = window
+        # insert noise to response features
+        self.responseFeatureNoise = response_feature_noise
         # calculate file name for storing/loading data
         self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.expanded_states}{self.full_questionnaire}{self.full_sequence}{self.oneHotResponseFeatures}{self.top_respond_perc}.pickle"
 
@@ -98,9 +101,57 @@ class BehaviorData:
     # get features for a participant
     def get_features(self, idx):
         if (self.insert_predictions):
-            return self.chunkedFeatures[idx] + self.responseMods[idx]
+            toReturn = self.chunkedFeatures[idx] + self.responseMods[idx]
         else:
-            return self.chunkedFeatures[idx]
+            toReturn = self.chunkedFeatures[idx]
+        if (self.responseFeatureNoise > 0):
+            toReturn = self.add_feature_noise(toReturn, idx)
+        return toReturn
+    
+    def add_feature_noise(self, data, indx):
+        # in this case, response features are the hard predicted classes
+        # adding noise doesn't make much sense so return without doing anything
+        if (not self.oneHotResponseFeatures):
+            return data
+
+        if (self.full_sequence):
+            # iterate through each week (row of this participants data)
+            for i, weekRow in enumerate(self.chunkedFeatures[indx]):
+                # iterate through the responses of weeks before this one
+                for j in range(i):
+                    # get index of this week's response to q1
+                    idx = self.responseIdx + (6 * j)
+                    for offset in range(2):
+                        curIdx = idx + 3*offset
+                        replace = data[i][curIdx:curIdx + 3]
+                        # no feature here yet - may be replaced by predictions later
+                        if (not replace.sum() > 0):
+                            continue
+                        replace += torch.normal(mean=torch.zeros(3), std=self.responseFeatureNoise * torch.ones(3))
+                        # re-normalize labels to ensure no < 0 and that sum = 1
+                        replace[replace < 0] = 0
+                        # divide each row by sum of that row
+                        replace /= replace.sum()
+                        # replace row with normalized
+                        data[i][curIdx:curIdx + 3] = replace
+        else:
+            # iterate through each week (row of this participants data)
+            for i, weekRow in enumerate(self.chunkedFeatures[indx]):
+                 # get index of this week's response to q1
+                for offset in range(2):
+                    curIdx = self.responseIdx + 3*offset
+                    replace = data[i][curIdx:curIdx + 3]
+                    # no feature here yet - may be replaced by predictions later
+                    if (not replace.sum() > 0):
+                        continue
+                    replace += torch.normal(mean=torch.zeros(3), std=self.responseFeatureNoise * torch.ones(3))
+                    # re-normalize labels to ensure no < 0 and that sum = 1
+                    replace[replace < 0] = 0
+                    # divide each row by sum of that row
+                    replace /= replace.sum()
+                    # replace row with normalized
+                    data[i][curIdx:curIdx + 3] = replace
+        return data
 
     # set feature modifications for all participants
     def set_feature_response_mods(self, indx, preds):
