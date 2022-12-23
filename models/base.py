@@ -82,17 +82,23 @@ class Base(nn.Module):
         # calculate loss, ignoring nonresponses
         pred = pred[y[:, 0] != 1]
         y = y[y[:, 0] != 1]
+        y = y[:, 1:]
         # smooth labels for hopefully better overall results
         l = self.labelSmoothPerc
         if (l > 0):
-            y[y[:, 1] == 1] += torch.tensor([[0, -l, l, 0]])
-            y[y[:, 2] == 1] += torch.tensor([[0, 2*l/3, -4*l/3, 2*l/3]])
-            y[y[:, 3] == 1] += torch.tensor([[0, 0, l, -l]])
+            y[y[:, 0] == 1] += torch.tensor([[0, -l, l, 0]])
+            y[y[:, 1] == 1] += torch.tensor([[0, 2*l/3, -4*l/3, 2*l/3]])
+            y[y[:, 2] == 1] += torch.tensor([[0, 0, l, -l]])
         g = self.gaussianNoiseStd
         if (g > 0):
             y += torch.normal(mean=torch.zeros_like(y), std=g * torch.ones_like(y))
+            # re-normalize labels to ensure no < 0 and that sum = 1
+            y[y < 0] = 0
+            # divide each row by sum of that row
+            y /= y.sum(dim=1).unsqueeze(-1).expand(y.size())
 
-        loss = crit(pred, y[:, 1:])
+
+        loss = crit(pred, y)
         return loss
             
 
