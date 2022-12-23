@@ -65,8 +65,13 @@ class BehaviorData:
         # find index of first response value so we don't have to compute this again
         # used to replace non responses with the model's prediction
         for idx, feature in enumerate(self.featureList):
-            if (feature == "response0_1"):
-                self.responseIdx = idx
+            if (self.full_sequence):
+                if (feature == "response0_1"):
+                    self.responseIdx = idx
+            else:
+                if (feature == "response_last_1"):
+                    self.responseIdx = idx
+            
 
         self.splitData(train_perc)
 
@@ -92,41 +97,61 @@ class BehaviorData:
 
     # get features for a participant
     def get_features(self, idx):
-        if (self.full_sequence and self.insert_predictions):
+        if (self.insert_predictions):
             return self.chunkedFeatures[idx] + self.responseMods[idx]
         else:
             return self.chunkedFeatures[idx]
 
     # set feature modifications for all participants
     def set_feature_response_mods(self, indx, preds):
-        # do nothing if we're not using responses as features
+        # do nothing if we're not inserting predictions
         # modifications will remain 0
-        if (not self.full_sequence or not self.insert_predictions):
+        if (not self.insert_predictions):
             return
         # set up our feature modifications
         mods = np.zeros_like(self.chunkedFeatures[indx].numpy())
-        # iterate through each week (row of this participants data)
-        for i, weekRow in enumerate(self.chunkedFeatures[indx]):
-            # iterate through the responses of weeks before this one
-            for j in range(i):
-                # get index of this week's response to q1
-                if (self.oneHotResponseFeatures):
-                    idx = self.responseIdx + (6 * j)
-                    for offset in range(2):
-                        curIdx = idx + 3*offset
-                        if weekRow[curIdx] == -1:
-                            mods[i][curIdx:curIdx + 3] = 1 + preds[j][offset*3:(3*offset)+3]
-                else:
-                    idx = self.responseIdx + (2 * j)
-                    for offset in range(2):
-                        if weekRow[idx + offset] == -1:
-                            # first question
-                            if (offset == 0):
-                                # calculate most likely predicted class and save to use as the feature
-                                mods[i][idx + offset] = 2 + np.argmax(preds[j][0:(self.dimensions[1]//2)])
-                                # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
-                            else:
-                                mods[i][idx + offset] = 2 + np.argmax(preds[j][(self.dimensions[1]//2):])
+        if (self.full_sequence):
+            # iterate through each week (row of this participants data)
+            for i, weekRow in enumerate(self.chunkedFeatures[indx]):
+                # iterate through the responses of weeks before this one
+                for j in range(i):
+                    # get index of this week's response to q1
+                    if (self.oneHotResponseFeatures):
+                        idx = self.responseIdx + (6 * j)
+                        for offset in range(2):
+                            curIdx = idx + 3*offset
+                            if weekRow[curIdx] == -1:
+                                mods[i][curIdx:curIdx + 3] = 1 + preds[j][offset*3:(3*offset)+3]
+                    else:
+                        idx = self.responseIdx + (2 * j)
+                        for offset in range(2):
+                            if weekRow[idx + offset] == -1:
+                                # first question
+                                if (offset == 0):
+                                    # calculate most likely predicted class and save to use as the feature
+                                    mods[i][idx + offset] = 2 + np.argmax(preds[j][0:(self.dimensions[1]//2)])
+                                    # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
+                                else:
+                                    mods[i][idx + offset] = 2 + np.argmax(preds[j][(self.dimensions[1]//2):])
+        else:
+            # iterate through each week (row of this participants data)
+            for i, weekRow in enumerate(self.chunkedFeatures[indx]):
+                 # get index of this week's response to q1
+                    if (self.oneHotResponseFeatures):
+                        for offset in range(2):
+                            curIdx = self.responseIdx + 3*offset
+                            if weekRow[curIdx] == -1:
+                                mods[i][curIdx:curIdx + 3] = 1 + preds[i - 1][offset*3:(3*offset)+3]
+                    else:
+                        for offset in range(2):
+                            if weekRow[self.responseIdx + offset] == -1:
+                                # first question
+                                if (offset == 0):
+                                    # calculate most likely predicted class and save to use as the feature
+                                    mods[i][self.responseIdx + offset] = 2 + np.argmax(preds[i - 1][0:(self.dimensions[1]//2)])
+                                    # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
+                                else:
+                                    mods[i][self.responseIdx + offset] = 2 + np.argmax(preds[i - 1][(self.dimensions[1]//2):])
         self.responseMods[indx] = mods
                     
 
@@ -248,6 +273,26 @@ class BehaviorData:
                 print(elem)
                 for week in range(24):
                     d[f"{elem}{week}"] = d.apply(lambda row: construct_week_elem(row, week, elem), axis=1, result_type='reduce')
+        else:
+            def construct_last_week_response(row):
+                if row["week"] > 0:
+                    temp = d[d["pid"] == row['pid']]
+                    temp = temp[temp["week"] == row["week"] - 1]
+                    # set non response to -1 to distinguish from unknown (future) response
+                    if (0 in temp.iloc[0]["response"]):
+                        vals = []
+                        for val in temp.iloc[0]["response"]:
+                            if (val == 0):
+                                vals.append(-1)
+                            else:
+                                vals.append(val)
+                        return tuple(vals)
+                    else:
+                        return tuple(temp.iloc[0]["response"])
+                else:
+                    return (0, 0)
+            for week in range(24):
+                d["response_last"] = d.apply(lambda row: construct_last_week_response(row), axis=1, result_type='reduce')
 
         # record splits between different participants for later
         # basically we want to easily extract individual participant data
@@ -319,21 +364,22 @@ class BehaviorData:
             X = np.append(X, row["state"])
             featureList += ["state"] * len(row["state"])
 
+        def onehot_response(a, l):
+                    # unchanged if future/unknown response
+                    vec = np.zeros(l)
+                    if (a > 0):
+                        # 1 0 0 for class 1
+                        # 0 1 0 for class 2
+                        # 0 0 1 for class 3
+                        vec[a - 1] = 1
+                    elif (a < 0):
+                        # -1 -1 -1 for non response
+                        vec -= 1
+                    return vec
+
         if self.full_sequence:
             for week in range(24):
                 if (self.oneHotResponseFeatures):
-                    def onehot_response(a, l):
-                        # unchanged if future/unknown response
-                        vec = np.zeros(l)
-                        if (a > 0):
-                            # 1 0 0 for class 1
-                            # 0 1 0 for class 2
-                            # 0 0 1 for class 3
-                            vec[a - 1] = 1
-                        elif (a < 0):
-                            # -1 -1 -1 for non response
-                            vec -= 1
-                        return vec
                     for r in row[f"response{week}"]:
                         encoding = onehot_response(r, 3)
                         X = np.append(X, encoding)
@@ -342,6 +388,16 @@ class BehaviorData:
                 else:
                     X = np.append(X, row[f"response{week}"])
                     featureList += [f"response{week}_1", f"response{week}_2"]
+        else:
+            if (self.oneHotResponseFeatures):
+                for r in row[f"response_last"]:
+                    encoding = onehot_response(r, 3)
+                    X = np.append(X, encoding)
+                featureList += [f"response_last_1"] * 3
+                featureList += [f"response_last_2"] * 3
+            else:
+                X = np.append(X, row["response_last"])
+                featureList += ["response_last_1", "response_last_2"]
         
         for j in range(len(feats_to_enc)):
             for k in range(len(feats_to_enc[j])):
