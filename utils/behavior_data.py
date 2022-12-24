@@ -71,9 +71,11 @@ class BehaviorData:
             if (self.full_sequence):
                 if (feature == "response0_1"):
                     self.responseIdx = idx
+                    break
             else:
                 if (feature == "response_last_1"):
                     self.responseIdx = idx
+                    break
             
 
         self.splitData(train_perc)
@@ -141,6 +143,8 @@ class BehaviorData:
                 for offset in range(2):
                     curIdx = self.responseIdx + 3*offset
                     replace = data[i][curIdx:curIdx + 3]
+                    if torch.sum(replace) > 1.01:
+                        print("Some problem", replace)
                     # no feature here yet - may be replaced by predictions later
                     if (not replace.sum() > 0):
                         continue
