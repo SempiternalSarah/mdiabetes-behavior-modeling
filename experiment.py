@@ -5,11 +5,12 @@ import importlib
 
 class Experiment:
     
-    def __init__(self, data_kw={}, model="BasicLSTM", model_kw={}, train_kw={}, numValFolds=5, epochsToUpdateLabelMods=5):
+    def __init__(self, data_kw={}, model="BasicLSTM", model_kw={}, train_kw={}, numValFolds=5, epochsToUpdateLabelMods=5, stateZeroEpochs=0):
         # data_kw:  dict of keyword arguments to BehaviorData instance
         # model_kw: dict of keyword arguments for Model instance
         # train_kw: dict of keyword arguments for training loop
         self.numValFolds = numValFolds
+        self.stateZeroEpochs = stateZeroEpochs
         self.data_kw = data_kw
         self.model_name = model
         self.model_kw = model_kw
@@ -184,6 +185,10 @@ class Experiment:
         epochs = self.train_kw.get("epochs", 1)
         rec_every = self.train_kw.get("rec_every", 5)
         for e in range(epochs):
+            
+            # enable the zeroing of state features once appropriate
+            if (self.stateZeroEpochs > 0 and e == self.stateZeroEpochs):
+                self.bd.zeroStateFeatures = True
 
             lh = self.train_epoch(opt)
 

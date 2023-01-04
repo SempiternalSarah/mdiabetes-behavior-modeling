@@ -58,6 +58,9 @@ class BehaviorData:
         # calculate file name for storing/loading data
         self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.expanded_states}{self.full_questionnaire}{self.full_sequence}{self.oneHotResponseFeatures}{self.top_respond_perc}.pickle"
 
+        # whether to zero out state features (off at first, experiment.py will turn on)
+        self.zeroStateFeatures = False
+
         # data saved - we can just load it
         if os.path.exists(self.fname):
             self.load()
@@ -65,6 +68,10 @@ class BehaviorData:
             self.data = self.build()
             self.features, self.labels, self.featureList = self.encode(self.data)
             self.save()
+
+        # calculate mask to zero out state values if later desired
+        self.stateZeroMask = torch.where(torch.tensor(self.featureList == "state"), 0, 1)
+
         # find index of first response value so we don't have to compute this again
         # used to replace non responses with the model's prediction
         for idx, feature in enumerate(self.featureList):
@@ -108,6 +115,8 @@ class BehaviorData:
             toReturn = self.chunkedFeatures[idx]
         if (self.responseFeatureNoise > 0):
             toReturn = self.add_feature_noise(toReturn, idx)
+        if (self.zeroStateFeatures):
+            toReturn = self.stateZeroMask * toReturn
         return toReturn
     
     def add_feature_noise(self, data, indx):
