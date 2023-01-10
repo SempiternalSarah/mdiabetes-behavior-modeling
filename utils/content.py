@@ -137,11 +137,11 @@ class QuestionHandler:
         return question_map
     
     def sid_lookup(self, qs):
-        sids = [[],[]]
-        for qi, q in enumerate(qs):
+        sids = []
+        for q in qs:
             for k in self.question_map.keys():
                 if q in self.question_map[k]:
-                    sids[qi].append(k)
+                    sids.append(k)
         return sids
 
     def random_questions(self, state_elems):

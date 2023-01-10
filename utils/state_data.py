@@ -83,8 +83,8 @@ class StateData:
             msg_ids.append(self.msgh.mid_lookup(actions[c,1]))
             pmsg_ids.append(self.msgh.mid_lookup(pactions[c,1]))
             action_sids.append(self.msgh.sid_lookup(actions[c,1]))
-            paction_sids.append(self.msgh.sid_lookup(pactions[c,1]))
             qrow = [r['Q1_ID'].item(), r['Q2_ID'].item()]
+            paction_sids.append(self.qsnh.sid_lookup(qrow))
             questions.append(qrow)
             rrow = [r['Q1_response'].item(), r['Q2_response'].item()]
             responses.append(rrow)
