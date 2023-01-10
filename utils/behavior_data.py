@@ -292,6 +292,12 @@ class BehaviorData:
 
         return df
 
+    def get_weekly_response_rates(self):
+        # sum response count for each week
+        counts = self.data.groupby("week")['response_count'].sum()
+        totals = self.data.groupby("week")['response_count'].count()
+        return (counts/totals).values
+
 
     def build(self):
         # call StateData and build our initial unencoded dataset
