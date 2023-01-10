@@ -17,7 +17,8 @@ class Base(nn.Module):
                  lossfn="CrossEntropyLoss", loss_kw={},
                  lr_step_mult=.9, lr_step_epochs=60,
                  optimizer="Adam", opt_kw={"lr": 1e-3},
-                 labelSmoothPerc = 0.0, gaussianNoiseStd = 0.0):
+                 labelSmoothPerc = 0.0, gaussianNoiseStd = 0.0,
+                 numTimesteps = 24):
         # define all inputs to the model
         # input_size:   # features in input
         # hidden_size:  # size of hidden layer
@@ -36,6 +37,7 @@ class Base(nn.Module):
         self.optimizer, self.opt_kw = optimizer, opt_kw
         self.labelSmoothPerc = labelSmoothPerc
         self.gaussianNoiseStd = gaussianNoiseStd
+        self.numTimesteps = numTimesteps
         
         
     def forward(self, x):
@@ -131,7 +133,14 @@ class Base(nn.Module):
             acc1 = (pred1[:, 0].sum()) / pred1.shape[0]
             acc2 = (pred2[:, 1].sum()) / pred2.shape[0]
             acc3 = (pred3[:, 2].sum()) / pred3.shape[0]
-            return np.array([mseloss.item(), celoss.item(), ndcg.item(), mrr.item(), accuracy.item(), precision.item(), recall.item(), acc1, acc2, acc3, class_precision[0].item(), class_precision[1].item(), class_precision[2].item(), class_recall[0].item(), class_recall[1].item(), class_recall[2].item(), pred1.shape[0], pred2.shape[0], pred3.shape[0]]), ["MSE", "CE", "NDCG", "MRR", "Acc","Prec", "Rec", "Acc1", "Acc2", "Acc3", "Prec1", "Prec2", "Prec3", "Rec1", "Rec2", "Rec3", "Count1", "Count2", "Count3"]
+            # per timestep accuracy
+            timeAcc = []
+            timeLabels = []
+            for x in range(self.numTimesteps):
+                indices = np.arange(x, predValues.shape[0], self.numTimesteps)
+                timeAcc.append((predValues[indices] * y[indices, 1:]).sum() / len(indices))
+                timeLabels.append(f"Week{x}Acc")
+            return np.array([mseloss.item(), celoss.item(), ndcg.item(), mrr.item(), accuracy.item(), precision.item(), recall.item(), acc1, acc2, acc3, class_precision[0].item(), class_precision[1].item(), class_precision[2].item(), class_recall[0].item(), class_recall[1].item(), class_recall[2].item(), pred1.shape[0], pred2.shape[0], pred3.shape[0]] + timeAcc), ["MSE", "CE", "NDCG", "MRR", "Acc","Prec", "Rec", "Acc1", "Acc2", "Acc3", "Prec1", "Prec2", "Prec3", "Rec1", "Rec2", "Rec3", "Count1", "Count2", "Count3"] + timeLabels
         else:
             return [], ["MSE", "CE", "NDCG", "MRR", "Acc", "ResCount"]
                      

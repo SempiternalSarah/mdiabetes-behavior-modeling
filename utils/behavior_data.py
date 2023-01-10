@@ -23,7 +23,8 @@ class BehaviorData:
                  full_sequence=False,
                  insert_predictions=False,
                  one_hot_response_features=True,
-                 response_feature_noise=.05):
+                 response_feature_noise=.05,
+                 max_state_week=1):
         # minw, maxw: min and max weeks to collect behavior from
         # include_pid: should the participant id be a feature to the model
         # include_state: should the participant state be a feature
@@ -49,6 +50,8 @@ class BehaviorData:
         # whether to include state values as features at all
         # default to true
         self.include_state = include_state
+        # how many weeks to include non-zero state features
+        self.max_state_week = max_state_week
         # not used
         self.active_samp = active_samp if active_samp is not None else 1
         # not used
@@ -56,7 +59,7 @@ class BehaviorData:
         # insert noise to response features
         self.responseFeatureNoise = response_feature_noise
         # calculate file name for storing/loading data
-        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.expanded_states}{self.full_questionnaire}{self.full_sequence}{self.oneHotResponseFeatures}{self.top_respond_perc}.pickle"
+        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.full_sequence}{self.oneHotResponseFeatures}{self.top_respond_perc}.pickle"
 
         # whether to zero out state features (off at first, experiment.py will turn on)
         self.zeroStateFeatures = False
@@ -224,11 +227,30 @@ class BehaviorData:
     def load_questionnaire_states(self):
         if (self.full_questionnaire):
             sh = StatesHandler(map="map_individual.json")
+            shForIds = StatesHandler(map="map_detailed.json")
         elif (self.expanded_states):
             sh = StatesHandler(map="map_detailed.json")
         else:
             sh = StatesHandler(map="map.json")
-        whatsapps, states = sh.compute_states()
+        whatsapps, states, qlist = sh.compute_states()
+        states = states.numpy()
+
+
+        # load question state IDs
+        if(self.full_questionnaire):
+            finalStates = []
+            statelist = shForIds.get_SID_translation_list(qlist)
+            # append dynamic question values along with their state IDs
+            for idx, state in enumerate(statelist):
+                finalStates.append(states[:, idx])
+                # print(finalStates)
+                finalStates.append(np.repeat(state, states.shape[0]))
+            # append remaining (static demographic information) question values
+            for idx in range(len(statelist), states.shape[1]):
+                finalStates.append(states[:, idx])
+            states = np.array(finalStates).transpose()
+
+
         def modify_whatsapp(x):
             # helper function to parse the whatsapp numbers
             x = str(x)
@@ -241,7 +263,7 @@ class BehaviorData:
         # filter responses to only include ones in the AI participant set
         isect, idIdxs, stateIdxs = np.intersect1d(participantIDs[:, 1], whatsapps, return_indices=True)
         # combine the glific IDs with the states into a dictionary and return
-        return dict(zip(participantIDs[idIdxs, 0].numpy(), states[stateIdxs].numpy())), start_weeks
+        return dict(zip(participantIDs[idIdxs, 0].numpy(), states[stateIdxs])), start_weeks
 
     def get_participant_start_weeks(self):
         # get start week for each participant
@@ -281,8 +303,6 @@ class BehaviorData:
         # filter out rows that aren't supposed to be here
         # unsure where they come from but they aren't listed in the all_ai_participants.csv
         d = d[d["pid"].isin(list(dict.keys(init_states)))]
-        # change the computed states to be the initial questionnaire states instead
-        d["state"] = d.apply(lambda row: init_states[row["pid"]], axis=1)
 
         # adjust week values per participant (their first week should be 0, last 24)
         def adjustWeek(row):
@@ -297,6 +317,15 @@ class BehaviorData:
 
         # filter out rows after participant completed study
         d = d[d["week"] < 24]
+
+        # change the computed states to be the initial questionnaire states instead
+        def replaceState(row):
+            if (row['week'] >= self.max_state_week):
+                return np.zeros_like(init_states[row["pid"]])
+            else:
+                return init_states[row["pid"]]
+
+        d["state"] = d.apply(replaceState, axis=1)
 
         # rescale pid values in case we want to use them as features
         d["pidFeat"] = enc(d["pid"].values.reshape(-1,1)).astype(int)

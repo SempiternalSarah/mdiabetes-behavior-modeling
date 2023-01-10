@@ -182,23 +182,24 @@ class Questionnaire:
 
     def compute_states(self):
         # store the ID and calculate the state of participants
-        whatsapps, states = [], []
+        whatsapps, states, elemlist = [], [], []
         if self.mat is None:
-            return whatsapps, states
+            return whatsapps, states, elemlist
         for i in range(self.mat.shape[0]):
             whatsapp = str(self.mat.iloc[i]['18'])
             if whatsapp is None or whatsapp == '':
                 continue
             whatsapp = int(whatsapp)
-            st = self.compute_participant_state(i)
+            st, elemlist = self.compute_participant_state(i)
             whatsapps.append(whatsapp)
             states.append(st)
-        return whatsapps, states
+        return whatsapps, states, elemlist
 
     def compute_participant_state(self, i):
         # perform the logic defined in the state map
         participant = self.mat.iloc[i]
         participant_state = []
+        state_elems = []
         if self.mat is None:
             return participant_state
         for skey in ['dynamic', 'fixed']:
@@ -230,7 +231,27 @@ class Questionnaire:
                         val += 3
                     count += 1
                 participant_state.append(val/count if count > 0 else 0)
-        return participant_state
+                if (skey == 'dynamic'):
+                    state_elems.append(state_elem)
+        return participant_state, state_elems
+
+    def get_SID_translation_list(self, questions):
+        sidlist = []
+        for question in questions:
+            toBreak = False
+            for id, (state_elem, block) in enumerate(self.smap['dynamic'].items()):
+                # don't repeatedly look for same question
+                if (toBreak):
+                    toBreak = False
+                    break
+                for method, column, low, medium, high in block:
+                    if question == column:
+                        sidlist.append(id + 1)
+                        toBreak = True
+                        break
+                        
+        return sidlist
+
 
     def preprocess(self):
         # clean up the raw questionnaires
@@ -266,13 +287,16 @@ class StatesHandler:
         self.qhs = [Questionnaire(self.pref, l, map=map, endline=endline) for l in self.langs]
         self.state_max = 3
         self.N_elem = None
+
+    def get_SID_translation_list(self, questions):
+        return self.qhs[2].get_SID_translation_list(questions)
         
     def compute_states(self):
         # compute the states for all questionnaire groups
         # and merge into one 
         whatsapps, states = [], []
         for qh in self.qhs:
-            wa, st = qh.compute_states()
+            wa, st, statelist = qh.compute_states()
             for i in range(len(wa)):
                 if wa[i] in whatsapps:
                     continue
@@ -282,7 +306,7 @@ class StatesHandler:
             self.N_elem = len(states[0])
         whatsapps = torch.tensor(whatsapps).long()
         states = torch.tensor(states)
-        return whatsapps, states
+        return whatsapps, states, statelist
 
 
 # if __name__ != "__main__":
