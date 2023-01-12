@@ -10,3 +10,4 @@ data/
 **/imgDet
 **/hidden_size_experiment_output
 *.pickle
+*.zip

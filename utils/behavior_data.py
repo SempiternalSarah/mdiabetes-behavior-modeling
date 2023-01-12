@@ -115,7 +115,7 @@ class BehaviorData:
         if (self.insert_predictions):
             toReturn = self.chunkedFeatures[idx] + self.responseMods[idx]
         else:
-            toReturn = self.chunkedFeatures[idx]
+            toReturn = self.chunkedFeatures[idx].clone()
         if (self.responseFeatureNoise > 0):
             toReturn = self.add_feature_noise(toReturn, idx)
         if (self.zeroStateFeatures):
