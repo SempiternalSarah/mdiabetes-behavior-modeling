@@ -7,6 +7,7 @@ from utils.state_data import StateData
 from utils.content import StatesHandler, QuestionHandler, MessageHandler
 from torch import save, load
 import torch
+import json
 
 # class to manage loading and encoding behavioral data
 class BehaviorData:
@@ -24,7 +25,8 @@ class BehaviorData:
                  insert_predictions=False,
                  one_hot_response_features=True,
                  response_feature_noise=.05,
-                 max_state_week=1):
+                 max_state_week=1,
+                 split_model_features=True):
         # minw, maxw: min and max weeks to collect behavior from
         # include_pid: should the participant id be a feature to the model
         # include_state: should the participant state be a feature
@@ -63,6 +65,10 @@ class BehaviorData:
 
         # whether to zero out state features (off at first, experiment.py will turn on)
         self.zeroStateFeatures = False
+
+        # adds extra features denoting the category of each question
+        # (consumption, exercise, knowledge)
+        self.split_model_features = split_model_features
 
         # data saved - we can just load it
         if os.path.exists(self.fname):
@@ -504,6 +510,24 @@ class BehaviorData:
                 bin_feat = _padded_binary(feats_to_enc[j][k],ls[j])
                 X = np.append(X, bin_feat)
                 featureList += [f"{elems[j]}_{k}"] * len(bin_feat)
+        
+        if self.split_model_features:
+            with open(self.path_pre+self.map, 'r') as fp:
+                qmap = json.loads(fp.read())
+            qCatDict = {}
+            for key in qmap.keys():
+                for elem in qmap[key]:
+                    if (key == 1 or key == 2):
+                        qCatDict[elem] = 0
+                    elif (key == 3):
+                        qCatDict[elem] = 1
+                    else:
+                        qCatDict[elem] = 2
+            for idx, qid in enumerate(row["qids"]):
+                bin_feat = _padded_binary(qid, 4)
+                X = np.append(X, bin_feat)
+                featureList += [f"Q{idx}_cat"] * len(bin_feat)
+            
         # responses are the labels
         Y = np.array([])
         for i,r in enumerate(row["response"]):

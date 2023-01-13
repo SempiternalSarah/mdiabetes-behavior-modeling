@@ -18,7 +18,8 @@ class Base(nn.Module):
                  lr_step_mult=.9, lr_step_epochs=60,
                  optimizer="Adam", opt_kw={"lr": 1e-3},
                  labelSmoothPerc = 0.0, gaussianNoiseStd = 0.0,
-                 numTimesteps = 24):
+                 numTimesteps = 24,
+                 splitModel = False):
         # define all inputs to the model
         # input_size:   # features in input
         # hidden_size:  # size of hidden layer
@@ -38,6 +39,7 @@ class Base(nn.Module):
         self.labelSmoothPerc = labelSmoothPerc
         self.gaussianNoiseStd = gaussianNoiseStd
         self.numTimesteps = numTimesteps
+        self.splitModel = splitModel
         
         
     def forward(self, x):
@@ -75,7 +77,10 @@ class Base(nn.Module):
         else:
             crit = self.make_criterion()
         # print(pred.shape, y.shape)
-        k = self.output_size // 2
+        if self.splitModel:
+            k = self.output_size
+        else:
+            k = self.output_size // 2
         pred = pred.view((y.shape[0], k*2))
         
         # reshape preds/labels so that one question = one row
@@ -105,7 +110,10 @@ class Base(nn.Module):
             
 
     def report_scores_min(self, y, pred):
-        k = self.output_size // 2
+        if self.splitModel:
+            k = self.output_size
+        else:
+            k = self.output_size // 2
         # calculate loss, ignoring nonresponses
         pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
         y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)

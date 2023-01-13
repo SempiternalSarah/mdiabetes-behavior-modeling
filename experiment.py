@@ -5,7 +5,7 @@ import importlib
 
 class Experiment:
     
-    def __init__(self, data_kw={}, model="BasicLSTM", model_kw={}, train_kw={}, numValFolds=5, epochsToUpdateLabelMods=5, stateZeroEpochs=0):
+    def __init__(self, data_kw={}, model="BasicLSTM", model_kw={}, train_kw={}, numValFolds=5, epochsToUpdateLabelMods=5, stateZeroEpochs=0, modelSplit=False):
         # data_kw:  dict of keyword arguments to BehaviorData instance
         # model_kw: dict of keyword arguments for Model instance
         # train_kw: dict of keyword arguments for training loop
@@ -21,11 +21,32 @@ class Experiment:
         self.epochsToUpdateLabelMods = epochsToUpdateLabelMods
 
         self.bd = BehaviorData(**data_kw)
-        self.model = self._get_model()(
-            input_size=self.bd.dimensions[0],
-            output_size=self.bd.dimensions[1],
-            **model_kw,
-        )
+        if modelSplit and "LSTM" not in model:
+            self.modelSplit = True
+            self.physicalModel = self._get_model()(
+                input_size=self.bd.dimensions[0],
+                output_size=self.bd.dimensions[1] // 2,
+                **model_kw,
+            )
+            self.knowledgeModel = self._get_model()(
+                input_size=self.bd.dimensions[0],
+                output_size=self.bd.dimensions[1] // 2,
+                **model_kw,
+            )
+            self.consumptionModel = self._get_model()(
+                input_size=self.bd.dimensions[0],
+                output_size=self.bd.dimensions[1] // 2,
+                **model_kw,
+            )
+            # define one model for shared functionality (like score reporting and optimizer creation)
+            self.model = self.physicalModel
+        else:
+            self.modelSplit = False
+            self.model = self._get_model()(
+                input_size=self.bd.dimensions[0],
+                output_size=self.bd.dimensions[1],
+                **model_kw,
+            )
         
 
     def runValidation(self):
@@ -115,7 +136,7 @@ class Experiment:
             label = self.bd.chunkedLabels[indx]
             # important to note that we are not using batching here
             # one participants data is ONE sequence
-            pred = self.model.predict(data)
+            pred = self.getPrediction(data)
             # we have to predict with one sequence at a time and then
             # stitch together the predictions and labels to calculate our metrics
             if (preds == None):
@@ -132,6 +153,51 @@ class Experiment:
         p3 = preds[labels[:, 3] == 1]
         return p1, p2, p3
 
+    # TODO: make sure this is correct and/or come up with more efficient method
+    def getPrediction(self, datas):
+        if not self.modelSplit:
+            pred = self.model.forward(datas)
+        else:
+            pred = torch.zeros([datas.shape[0] * 2, self.model.output_size])
+            pred.requires_grad = True
+            # separate data by category for each weekly question
+            # then, recombine the predictions using the indices
+            # consider computing these indices ahead of time and storing values for all participants?
+            consumptionRows2 = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
+            if consumptionRows2.numel() > 0:
+                consumptionRows2 = consumptionRows2[0, :]
+                cpred2 = self.consumptionModel.predict(datas[consumptionRows2])
+                pred.index_add(0, consumptionRows2, cpred2)
+            knowledgeRows2 = (torch.where(datas[:, -1] == 1, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
+            if knowledgeRows2.numel() > 0:
+                knowledgeRows2 = knowledgeRows2[0, :]
+                kpred2 = self.knowledgeModel.predict(datas[knowledgeRows2])
+                pred.index_add(0, knowledgeRows2, kpred2)
+            physRows2 = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 1, 1, 0)).nonzero()
+            if physRows2.numel() > 0:
+                physRows2 = physRows2[0, :]
+                ppred2 = self.physicalModel.predict(datas[physRows2])
+                pred.index_add(0, physRows2, ppred2)
+            consumptionRows1 = (torch.where(datas[:, -3] == 0, 1, 0) * torch.where(datas[:, -4] == 0, 1, 0)).nonzero()
+            if consumptionRows1.numel() > 0:
+                consumptionRows1 = consumptionRows1[0, :]
+                cpred1 = self.consumptionModel.predict(datas[consumptionRows1])
+                pred.index_add(0, consumptionRows1, cpred1)
+            knowledgeRows1 = (torch.where(datas[:, -3] == 1, 1, 0) * torch.where(datas[:, -4] == 0, 1, 0)).nonzero()
+            if knowledgeRows1.numel() > 0:
+                knowledgeRows1 = knowledgeRows1[0, :]
+                kpred1 = self.knowledgeModel.predict(datas[knowledgeRows1])
+                pred.index_add(0, knowledgeRows1, kpred1)
+            physRows1 = (torch.where(datas[:, -3] == 0, 1, 0) * torch.where(datas[:, -4] == 1, 1, 0)).nonzero()
+            if physRows1.numel() > 0:
+                physRows1 = physRows1[0, :]
+                ppred1 = self.physicalModel.predict(datas[physRows1])
+                pred.index_add(0, physRows1, ppred1)
+
+            # reshape to match single model output
+            pred = torch.cat((pred[0:datas.shape[0]], pred[datas.shape[0]:]), dim = 1)
+        
+        return pred
 
 
     def train_epoch_val(self, opt, trainSet):
@@ -146,7 +212,7 @@ class Experiment:
             label = self.bd.chunkedLabels[indx]
             # important to note that we are not using batching here
             # one participants data is ONE sequence
-            pred = self.model.forward(data)
+            pred = self.getPrediction(data)
             # we have to predict with one sequence at a time and then
             # stitch together the predictions and labels to calculate our metrics
             if (preds == None):
@@ -171,7 +237,7 @@ class Experiment:
                 for indx in set:
                     # extract one participants data
                     data = self.bd.get_features(indx)
-                    pred = self.model.forward(data)
+                    pred = self.getPrediction(data)
                     self.bd.set_feature_response_mods(indx, pred.detach().numpy())
 
         
@@ -181,7 +247,16 @@ class Experiment:
         stored_losses = []
         train_metrics = []
         test_metrics = []
-        opt, sched = self.model.make_optimizer()
+        opts = []
+        scheds = []
+        if (self.modelSplit):
+            for model in [self.consumptionModel, self.knowledgeModel, self.physicalModel]:
+                opt, sched = model.make_optimizer()
+                opts.append(opt)
+                scheds.append(sched)
+        else:
+            opt, sched = self.model.make_optimizer()
+            opts.append(opt)
         epochs = self.train_kw.get("epochs", 1)
         rec_every = self.train_kw.get("rec_every", 5)
         for e in range(epochs):
@@ -190,7 +265,7 @@ class Experiment:
             if (self.stateZeroEpochs > 0 and e == self.stateZeroEpochs):
                 self.bd.zeroStateFeatures = True
 
-            lh = self.train_epoch(opt)
+            lh = self.train_epoch(opts)
 
             # update our predictions as features when appropriate
             if (self.bd.insert_predictions):
@@ -205,7 +280,8 @@ class Experiment:
                 tmetrics, tlabels = self.report_scores()
                 test_metrics.append(tmetrics)
                 print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}")
-            sched.step()
+            for sched in scheds:
+                sched.step()
         return np.array(stored_losses), np.array(train_metrics), np.array(test_metrics), labels
 
     def calcFinalGradients(self):
@@ -227,7 +303,7 @@ class Experiment:
             label = self.bd.chunkedLabels[indx]
             # important to note that we are not using batching here
             # one participants data is ONE sequence
-            pred = self.model.forward(data)
+            pred = self.getPrediction(data)
             # we have to predict with one sequence at a time and then
             # stitch together the predictions and labels to calculate our metrics
             if (preds == None):
@@ -250,12 +326,13 @@ class Experiment:
                 grads = torch.cat([grads, grad], dim = 0)
         return grads.mean(dim=0)
     
-    def train_epoch(self, opt):
+    def train_epoch(self, opts):
         # feed through training data one time
         loss = []
         preds = None
         labels = None
-        opt.zero_grad()
+        for opt in opts:
+            opt.zero_grad()
         for indx in self.bd.train:
             # extract one participants data
             data  = self.bd.get_features(indx)
@@ -266,7 +343,7 @@ class Experiment:
             # for non LSTM models, the participants data is batched by week
             # no special trick here - the dimensions work to be non batched in LSTM (as desired)
             # and batched by week for non LSTM models (also as desired)
-            pred = self.model.forward(data)
+            pred = self.getPrediction(data)
             
 
             # we have to predict with one sequence at a time and then
@@ -282,7 +359,8 @@ class Experiment:
         if (loss1 != None):
             loss.append(loss1)
         loss1.backward()
-        opt.step()
+        for opt in opts:
+            opt.step()
         loss = [l1.item() for l1 in loss]
         return loss
     
@@ -295,7 +373,7 @@ class Experiment:
             label = self.bd.chunkedLabels[indx]
             # important to note that we are not using batching here
             # one participants data is ONE sequence
-            pred = self.model.predict(data)
+            pred = self.getPrediction(data)
             pred = pred.view(label.shape)
             evals.append(self.diff_matrix(label, pred))
         return evals
@@ -307,7 +385,7 @@ class Experiment:
                 # extract one participants data
                 data = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
-                pred = self.model.predict(data)
+                pred = self.getPrediction(data)
                 if (preds == None):
                     preds = pred
                     labels = label
@@ -324,7 +402,7 @@ class Experiment:
                 # extract one participants data
                 data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
-                pred = self.model.predict(data)
+                pred = self.getPrediction(data)
                 score, label = self.model.report_scores_min(label, pred)
                 if (len(score) > 0):
                     scores.append(score)
@@ -337,7 +415,7 @@ class Experiment:
                 # extract one participants data
                 data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
-                pred = self.model.predict(data)
+                pred = self.getPrediction(data)
                 score, label = self.model.report_scores_min(label, pred)
                 if (len(score) > 0):
                     scores.append(score)
@@ -351,7 +429,7 @@ class Experiment:
                 # extract one participants data
                 data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
-                pred = self.model.predict(data)
+                pred = self.getPrediction(data)
                 if (preds == None):
                     preds = pred
                     labels = label
@@ -368,7 +446,7 @@ class Experiment:
                 # extract one participants data
                 data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
-                pred = self.model.predict(data)
+                pred = self.getPrediction(data)
                 if (preds == None):
                     preds = pred
                     labels = label
