@@ -150,8 +150,9 @@ class Experiment:
             else: 
                 preds = torch.cat([preds, pred], dim = 0)
                 labels = torch.cat([labels, label], dim = 0)
-        preds = torch.cat([preds[:, :3], preds[:, 3:]], 0)
-        labels = torch.cat([labels[:, :3 + 1], labels[:, 3 + 1:]], 0)
+        if (not self.bd.split_weekly_questions):
+            preds = torch.cat([preds[:, :3], preds[:, 3:]], 0)
+            labels = torch.cat([labels[:, :3 + 1], labels[:, 3 + 1:]], 0)
         preds = preds.argmax(dim=1)
         p1 = preds[labels[:, 1] == 1]
         p2 = preds[labels[:, 2] == 1]
