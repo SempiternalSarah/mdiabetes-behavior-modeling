@@ -165,35 +165,48 @@ class Experiment:
             # consider computing these indices ahead of time and storing values for all participants?
             consumptionRows2 = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
             if consumptionRows2.numel() > 0:
-                consumptionRows2 = consumptionRows2[0, :]
+                # print("c2")
+                consumptionRows2 = consumptionRows2.squeeze(dim=-1)
                 cpred2 = self.consumptionModel.predict(datas[consumptionRows2])
-                pred.index_add(0, consumptionRows2, cpred2)
+                consumptionRows2 += datas.shape[0]
+                # print(cpred2.shape, consumptionRows2.shape)
+                pred = pred.index_add(0, consumptionRows2, cpred2)
             knowledgeRows2 = (torch.where(datas[:, -1] == 1, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
             if knowledgeRows2.numel() > 0:
-                knowledgeRows2 = knowledgeRows2[0, :]
+                # print("k2")
+                if knowledgeRows2.dim() > 1:
+                    knowledgeRows2 = knowledgeRows2.squeeze(dim=-1)
                 kpred2 = self.knowledgeModel.predict(datas[knowledgeRows2])
-                pred.index_add(0, knowledgeRows2, kpred2)
+                knowledgeRows2 += datas.shape[0]
+                # print(kpred2.shape, knowledgeRows2)
+                pred = pred.index_add(0, knowledgeRows2, kpred2)
             physRows2 = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 1, 1, 0)).nonzero()
             if physRows2.numel() > 0:
-                physRows2 = physRows2[0, :]
+                # print("p2")
+                physRows2 = physRows2.squeeze(dim=-1)
                 ppred2 = self.physicalModel.predict(datas[physRows2])
-                pred.index_add(0, physRows2, ppred2)
+                physRows2 += datas.shape[0]
+                pred = pred.index_add(0, physRows2, ppred2)
             consumptionRows1 = (torch.where(datas[:, -3] == 0, 1, 0) * torch.where(datas[:, -4] == 0, 1, 0)).nonzero()
             if consumptionRows1.numel() > 0:
-                consumptionRows1 = consumptionRows1[0, :]
+                # print("c1")
+                consumptionRows1 = consumptionRows1.squeeze(dim=-1)
                 cpred1 = self.consumptionModel.predict(datas[consumptionRows1])
-                pred.index_add(0, consumptionRows1, cpred1)
+                pred = pred.index_add(0, consumptionRows1, cpred1)
             knowledgeRows1 = (torch.where(datas[:, -3] == 1, 1, 0) * torch.where(datas[:, -4] == 0, 1, 0)).nonzero()
             if knowledgeRows1.numel() > 0:
-                knowledgeRows1 = knowledgeRows1[0, :]
+                # print("k1")
+                knowledgeRows1 = knowledgeRows1.squeeze(dim=-1)
                 kpred1 = self.knowledgeModel.predict(datas[knowledgeRows1])
-                pred.index_add(0, knowledgeRows1, kpred1)
+                pred = pred.index_add(0, knowledgeRows1, kpred1)
             physRows1 = (torch.where(datas[:, -3] == 0, 1, 0) * torch.where(datas[:, -4] == 1, 1, 0)).nonzero()
             if physRows1.numel() > 0:
-                physRows1 = physRows1[0, :]
+                physRows1 = physRows1.squeeze(dim=-1)
+                # print("p1", physRows1, datas)
                 ppred1 = self.physicalModel.predict(datas[physRows1])
-                pred.index_add(0, physRows1, ppred1)
+                pred = pred.index_add(0, physRows1, ppred1)
 
+            # print(pred)
             # reshape to match single model output
             pred = torch.cat((pred[0:datas.shape[0]], pred[datas.shape[0]:]), dim = 1)
         
@@ -274,6 +287,9 @@ class Experiment:
 
             # record metrics every rec_every epochs
             if (e%rec_every) == 0 or e == epochs - 1:
+                for model in [self.consumptionModel, self.knowledgeModel, self.physicalModel]:
+                    for param in model.parameters():
+                        print(param)
                 stored_losses.append(lh)
                 metrics, labels = self.report_scores_train()
                 train_metrics.append(metrics)
@@ -282,6 +298,7 @@ class Experiment:
                 print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}")
             for sched in scheds:
                 sched.step()
+        
         return np.array(stored_losses), np.array(train_metrics), np.array(test_metrics), labels
 
     def calcFinalGradients(self):

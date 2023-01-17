@@ -61,14 +61,16 @@ class BehaviorData:
         # insert noise to response features
         self.responseFeatureNoise = response_feature_noise
         # calculate file name for storing/loading data
-        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.full_sequence}{self.oneHotResponseFeatures}{self.top_respond_perc}.pickle"
-
         # whether to zero out state features (off at first, experiment.py will turn on)
         self.zeroStateFeatures = False
 
         # adds extra features denoting the category of each question
         # (consumption, exercise, knowledge)
         self.split_model_features = split_model_features
+
+        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.full_sequence}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}.pickle"
+
+        
 
         # data saved - we can just load it
         if os.path.exists(self.fname):
@@ -103,6 +105,8 @@ class BehaviorData:
             self.responseMods[idx] = np.zeros_like(self.chunkedFeatures[idx])
         for idx in self.test:
             self.responseMods[idx] = np.zeros_like(self.chunkedFeatures[idx])
+
+        print(self.featureList)
 
         
     # splits data into test and training
@@ -417,6 +421,7 @@ class BehaviorData:
             Y.append(y)
         X, Y = np.stack(X), np.stack(Y)
         print(X.shape, Y.shape, len(featureList))
+        print(X[:, -4:])
         return torch.tensor(X).float(), torch.tensor(Y).float(), np.array(featureList)
                 
     def encode_row(self, row):
@@ -512,19 +517,19 @@ class BehaviorData:
                 featureList += [f"{elems[j]}_{k}"] * len(bin_feat)
         
         if self.split_model_features:
-            with open(self.path_pre+self.map, 'r') as fp:
+            with open("question_state_element_map.json", 'r') as fp:
                 qmap = json.loads(fp.read())
             qCatDict = {}
             for key in qmap.keys():
                 for elem in qmap[key]:
-                    if (key == 1 or key == 2):
+                    if (key == '1' or key == '2'):
                         qCatDict[elem] = 0
-                    elif (key == 3):
+                    elif (key == '3'):
                         qCatDict[elem] = 1
                     else:
                         qCatDict[elem] = 2
             for idx, qid in enumerate(row["qids"]):
-                bin_feat = _padded_binary(qid, 4)
+                bin_feat = _padded_binary(qCatDict[qid], 3)
                 X = np.append(X, bin_feat)
                 featureList += [f"Q{idx}_cat"] * len(bin_feat)
             
