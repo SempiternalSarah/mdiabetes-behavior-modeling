@@ -237,7 +237,10 @@ class BehaviorData:
     def load_questionnaire_states(self):
         if (self.full_questionnaire):
             sh = StatesHandler(map="map_individual.json")
-            shForIds = StatesHandler(map="map_detailed.json")
+            if (self.expanded_states):
+                shForIds = StatesHandler(map="map_detailed.json")
+            else:
+                shForIds = StatesHandler(map="map.json")
         elif (self.expanded_states):
             sh = StatesHandler(map="map_detailed.json")
         else:
@@ -248,13 +251,26 @@ class BehaviorData:
 
         # load question state IDs
         if(self.full_questionnaire):
+            if (self.expanded_states):
+                maxSVal = 17
+            else:
+                maxSVal = 5
+            def _padded_binary(a, b):
+                # helper function to binary encode a and 
+                # pad it to be the length of encoded b
+                a, b = int(a), int(b)
+                l = len(format(b,"b"))
+                a = format(a,f"0{l}b")
+                return np.array([int(_) for _ in a])
             finalStates = []
             statelist = shForIds.get_SID_translation_list(qlist)
             # append dynamic question values along with their state IDs
             for idx, state in enumerate(statelist):
                 finalStates.append(states[:, idx])
-                # print(finalStates)
-                finalStates.append(np.repeat(state, states.shape[0]))
+                # print(_padded_binary(state, maxSVal))
+                idVals = _padded_binary(state, maxSVal)
+                for idVal in idVals:
+                    finalStates.append(np.repeat(idVal, states.shape[0]))
             # append remaining (static demographic information) question values
             for idx in range(len(statelist), states.shape[1]):
                 finalStates.append(states[:, idx])
