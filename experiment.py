@@ -158,6 +158,10 @@ class Experiment:
         if not self.modelSplit:
             pred = self.model.forward(datas)
         else:
+            # pred = None
+            # for data in datas:
+            #     if data[-1] == 0 and datas[-2] == 0:
+            #         pred1 = 
             pred = torch.zeros([datas.shape[0] * 2, self.model.output_size])
             pred.requires_grad = True
             # separate data by category for each weekly question
@@ -176,7 +180,7 @@ class Experiment:
                 # print("k2")
                 if knowledgeRows2.dim() > 1:
                     knowledgeRows2 = knowledgeRows2.squeeze(dim=-1)
-                kpred2 = self.knowledgeModel.predict(datas[knowledgeRows2])
+                kpred2 = self.knowledgeModel.forward(datas[knowledgeRows2])
                 knowledgeRows2 += datas.shape[0]
                 # print(kpred2.shape, knowledgeRows2)
                 pred = pred.index_add(0, knowledgeRows2, kpred2)
@@ -184,26 +188,26 @@ class Experiment:
             if physRows2.numel() > 0:
                 # print("p2")
                 physRows2 = physRows2.squeeze(dim=-1)
-                ppred2 = self.physicalModel.predict(datas[physRows2])
+                ppred2 = self.physicalModel.forward(datas[physRows2])
                 physRows2 += datas.shape[0]
                 pred = pred.index_add(0, physRows2, ppred2)
             consumptionRows1 = (torch.where(datas[:, -3] == 0, 1, 0) * torch.where(datas[:, -4] == 0, 1, 0)).nonzero()
             if consumptionRows1.numel() > 0:
                 # print("c1")
                 consumptionRows1 = consumptionRows1.squeeze(dim=-1)
-                cpred1 = self.consumptionModel.predict(datas[consumptionRows1])
+                cpred1 = self.consumptionModel.forward(datas[consumptionRows1])
                 pred = pred.index_add(0, consumptionRows1, cpred1)
             knowledgeRows1 = (torch.where(datas[:, -3] == 1, 1, 0) * torch.where(datas[:, -4] == 0, 1, 0)).nonzero()
             if knowledgeRows1.numel() > 0:
                 # print("k1")
                 knowledgeRows1 = knowledgeRows1.squeeze(dim=-1)
-                kpred1 = self.knowledgeModel.predict(datas[knowledgeRows1])
+                kpred1 = self.knowledgeModel.forward(datas[knowledgeRows1])
                 pred = pred.index_add(0, knowledgeRows1, kpred1)
             physRows1 = (torch.where(datas[:, -3] == 0, 1, 0) * torch.where(datas[:, -4] == 1, 1, 0)).nonzero()
             if physRows1.numel() > 0:
                 physRows1 = physRows1.squeeze(dim=-1)
                 # print("p1", physRows1, datas)
-                ppred1 = self.physicalModel.predict(datas[physRows1])
+                ppred1 = self.physicalModel.forward(datas[physRows1])
                 pred = pred.index_add(0, physRows1, ppred1)
 
             # print(pred)
@@ -287,9 +291,9 @@ class Experiment:
 
             # record metrics every rec_every epochs
             if (e%rec_every) == 0 or e == epochs - 1:
-                for model in [self.consumptionModel, self.knowledgeModel, self.physicalModel]:
-                    for param in model.parameters():
-                        print(param)
+                # for model in [self.consumptionModel, self.knowledgeModel, self.physicalModel]:
+                #     for param in model.parameters():
+                #         print(param)
                 stored_losses.append(lh)
                 metrics, labels = self.report_scores_train()
                 train_metrics.append(metrics)
