@@ -600,6 +600,7 @@ class BehaviorData:
                     featureListFinal.append(name)
             featureList = featureListFinal
         else:
+            X1 = X
             X2 = None
             Y2 = None
             for i,r in enumerate(row["response"]):
