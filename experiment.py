@@ -21,11 +21,12 @@ class Experiment:
         self.epochsToUpdateLabelMods = epochsToUpdateLabelMods
 
         self.bd = BehaviorData(**data_kw)
+
+        if (self.bd.split_weekly_questions):
+            output_size = self.bd.dimensions[1]
+        else:
+            output_size = self.bd.dimensions[1] // 2
         if modelSplit and "LSTM" not in model:
-            if (self.bd.split_weekly_questions):
-                output_size = self.bd.dimensions[1]
-            else:
-                output_size = self.bd.dimensions[1] // 2
             self.modelSplit = True
             self.physicalModel = self._get_model()(
                 input_size=self.bd.dimensions[0],
@@ -48,7 +49,7 @@ class Experiment:
             self.modelSplit = False
             self.model = self._get_model()(
                 input_size=self.bd.dimensions[0],
-                output_size=self.bd.dimensions[1],
+                output_size=output_size,
                 **model_kw,
             )
         
@@ -171,7 +172,7 @@ class Experiment:
             if consumptionRows2.numel() > 0:
                 # print("c2")
                 consumptionRows2 = consumptionRows2.squeeze(dim=-1)
-                cpred2 = self.consumptionModel.predict(datas[consumptionRows2])
+                cpred2 = self.consumptionModel.forward(datas[consumptionRows2])
                 # these are predictions for weekly question 2
                 # add them to the tensor after all values for weekly question 1
                 consumptionRows2 += datas.shape[0]
@@ -228,7 +229,7 @@ class Experiment:
             if consumptionRows.numel() > 0:
                 # print("c2")
                 consumptionRows = consumptionRows.squeeze(dim=-1)
-                cpred = self.consumptionModel.predict(datas[consumptionRows])
+                cpred = self.consumptionModel.forward(datas[consumptionRows])
                 # print(cpred2.shape, consumptionRows2.shape)
                 pred = pred.index_add(0, consumptionRows, cpred)
             knowledgeRows = (torch.where(datas[:, -1] == 1, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()

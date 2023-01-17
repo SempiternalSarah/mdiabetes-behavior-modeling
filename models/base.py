@@ -79,7 +79,7 @@ class Base(nn.Module):
         else:
             crit = self.make_criterion()
         # print(pred.shape, y.shape)
-        if self.splitModel:
+        if self.splitWeeklyQuestions or self.splitModel:
             k = self.output_size
         else:
             k = self.output_size // 2
@@ -106,13 +106,12 @@ class Base(nn.Module):
             # divide each row by sum of that row
             y /= y.sum(dim=1).unsqueeze(-1).expand(y.size())
 
-
         loss = crit(pred, y)
         return loss
             
 
     def report_scores_min(self, y, pred):
-        if self.splitModel:
+        if self.splitWeeklyQuestions or self.splitModel:
             k = self.output_size
         else:
             k = self.output_size // 2

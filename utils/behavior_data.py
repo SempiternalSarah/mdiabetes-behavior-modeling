@@ -141,45 +141,52 @@ class BehaviorData:
         if (not self.oneHotResponseFeatures):
             return data
 
+        if (self.split_weekly_questions):
+            numQs = 1
+            k = self.dimensions[1]
+        else:
+            numQs = 2
+            k = self.dimensions[1] // 2
+
         if (self.full_sequence):
             # iterate through each week (row of this participants data)
             for i, weekRow in enumerate(self.chunkedFeatures[indx]):
                 # iterate through the responses of weeks before this one
                 for j in range(i):
                     # get index of this week's response to q1
-                    idx = self.responseIdx + (6 * j)
-                    for offset in range(2):
-                        curIdx = idx + 3*offset
-                        replace = data[i][curIdx:curIdx + 3]
+                    idx = self.responseIdx + (k * numQs * j)
+                    for offset in range(numQs):
+                        curIdx = idx + k*offset
+                        replace = data[i][curIdx:curIdx + k]
                         # no feature here yet - may be replaced by predictions later
                         if (not replace.sum() > 0):
                             continue
-                        replace += torch.normal(mean=torch.zeros(3), std=self.responseFeatureNoise * torch.ones(3))
+                        replace += torch.normal(mean=torch.zeros(k), std=self.responseFeatureNoise * torch.ones(k))
                         # re-normalize labels to ensure no < 0 and that sum = 1
                         replace[replace < 0] = 0
                         # divide each row by sum of that row
                         replace /= replace.sum()
                         # replace row with normalized
-                        data[i][curIdx:curIdx + 3] = replace
+                        data[i][curIdx:curIdx + k] = replace
         else:
             # iterate through each week (row of this participants data)
             for i, weekRow in enumerate(self.chunkedFeatures[indx]):
                  # get index of this week's response to q1
-                for offset in range(2):
-                    curIdx = self.responseIdx + 3*offset
-                    replace = data[i][curIdx:curIdx + 3]
+                for offset in range(numQs):
+                    curIdx = self.responseIdx + k*offset
+                    replace = data[i][curIdx:curIdx + k]
                     if torch.sum(replace) > 1.01:
                         print("Some problem", replace)
                     # no feature here yet - may be replaced by predictions later
                     if (not replace.sum() > 0):
                         continue
-                    replace += torch.normal(mean=torch.zeros(3), std=self.responseFeatureNoise * torch.ones(3))
+                    replace += torch.normal(mean=torch.zeros(k), std=self.responseFeatureNoise * torch.ones(k))
                     # re-normalize labels to ensure no < 0 and that sum = 1
                     replace[replace < 0] = 0
                     # divide each row by sum of that row
                     replace /= replace.sum()
                     # replace row with normalized
-                    data[i][curIdx:curIdx + 3] = replace
+                    data[i][curIdx:curIdx + k] = replace
         return data
 
     # set feature modifications for all participants
@@ -188,6 +195,12 @@ class BehaviorData:
         # modifications will remain 0
         if (not self.insert_predictions):
             return
+        if (self.split_weekly_questions):
+            numQs = 1
+            k = self.dimensions[1]
+        else:
+            numQs = 2
+            k = self.dimensions[1] // 2
         # set up our feature modifications
         mods = np.zeros_like(self.chunkedFeatures[indx].numpy())
         if (self.full_sequence):
@@ -197,41 +210,41 @@ class BehaviorData:
                 for j in range(i):
                     # get index of this week's response to q1
                     if (self.oneHotResponseFeatures):
-                        idx = self.responseIdx + (6 * j)
-                        for offset in range(2):
-                            curIdx = idx + 3*offset
+                        idx = self.responseIdx + (numQs * k * j)
+                        for offset in range(numQs):
+                            curIdx = idx + k*offset
                             if weekRow[curIdx] == -1:
-                                mods[i][curIdx:curIdx + 3] = 1 + preds[j][offset*3:(3*offset)+3]
+                                mods[i][curIdx:curIdx + k] = 1 + preds[j][offset*k:(k*offset)+k]
                     else:
-                        idx = self.responseIdx + (2 * j)
-                        for offset in range(2):
+                        idx = self.responseIdx + (numQs * j)
+                        for offset in range(numQs):
                             if weekRow[idx + offset] == -1:
                                 # first question
                                 if (offset == 0):
                                     # calculate most likely predicted class and save to use as the feature
-                                    mods[i][idx + offset] = 2 + np.argmax(preds[j][0:(self.dimensions[1]//2)])
+                                    mods[i][idx + offset] = 2 + np.argmax(preds[j][0:k])
                                     # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
                                 else:
-                                    mods[i][idx + offset] = 2 + np.argmax(preds[j][(self.dimensions[1]//2):])
+                                    mods[i][idx + offset] = 2 + np.argmax(preds[j][k:])
         else:
             # iterate through each week (row of this participants data)
             for i, weekRow in enumerate(self.chunkedFeatures[indx]):
                  # get index of this week's response to q1
                     if (self.oneHotResponseFeatures):
-                        for offset in range(2):
-                            curIdx = self.responseIdx + 3*offset
+                        for offset in range(numQs):
+                            curIdx = self.responseIdx + k*offset
                             if weekRow[curIdx] == -1:
-                                mods[i][curIdx:curIdx + 3] = 1 + preds[i - 1][offset*3:(3*offset)+3]
+                                mods[i][curIdx:curIdx + k] = 1 + preds[i - 1][offset*k:(k*offset)+k]
                     else:
-                        for offset in range(2):
+                        for offset in range(numQs):
                             if weekRow[self.responseIdx + offset] == -1:
                                 # first question
                                 if (offset == 0):
                                     # calculate most likely predicted class and save to use as the feature
-                                    mods[i][self.responseIdx + offset] = 2 + np.argmax(preds[i - 1][0:(self.dimensions[1]//2)])
+                                    mods[i][self.responseIdx + offset] = 2 + np.argmax(preds[i - 1][0:k])
                                     # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
                                 else:
-                                    mods[i][self.responseIdx + offset] = 2 + np.argmax(preds[i - 1][(self.dimensions[1]//2):])
+                                    mods[i][self.responseIdx + offset] = 2 + np.argmax(preds[i - 1][k:])
         self.responseMods[indx] = mods
                     
 
