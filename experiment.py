@@ -22,20 +22,24 @@ class Experiment:
 
         self.bd = BehaviorData(**data_kw)
         if modelSplit and "LSTM" not in model:
+            if (self.bd.split_weekly_questions):
+                output_size = self.bd.dimensions[1]
+            else:
+                output_size = self.bd.dimensions[1] // 2
             self.modelSplit = True
             self.physicalModel = self._get_model()(
                 input_size=self.bd.dimensions[0],
-                output_size=self.bd.dimensions[1] // 2,
+                output_size=output_size,
                 **model_kw,
             )
             self.knowledgeModel = self._get_model()(
                 input_size=self.bd.dimensions[0],
-                output_size=self.bd.dimensions[1] // 2,
+                output_size=output_size,
                 **model_kw,
             )
             self.consumptionModel = self._get_model()(
                 input_size=self.bd.dimensions[0],
-                output_size=self.bd.dimensions[1] // 2,
+                output_size=output_size,
                 **model_kw,
             )
             # define one model for shared functionality (like score reporting and optimizer creation)
@@ -153,11 +157,11 @@ class Experiment:
         p3 = preds[labels[:, 3] == 1]
         return p1, p2, p3
 
-    # TODO: make sure this is correct and/or come up with more efficient method
+    # get prediction for sequence of data
     def getPrediction(self, datas):
         if not self.modelSplit:
             pred = self.model.forward(datas)
-        else:
+        elif not self.bd.split_weekly_questions:
             pred = torch.zeros([datas.shape[0] * 2, self.model.output_size])
             pred.requires_grad = True
             # separate data by category for each weekly question
@@ -214,6 +218,33 @@ class Experiment:
             # reshape to match single model output
             # final shape is 2 questions per row (1 row = 1 week for this participant)
             pred = torch.cat((pred[0:datas.shape[0]], pred[datas.shape[0]:]), dim = 1)
+        else:
+            pred = torch.zeros([datas.shape[0], self.model.output_size])
+            pred.requires_grad = True
+            # separate data by category for each weekly question
+            # then, recombine the predictions using the indices
+            # consider computing these indices ahead of time and storing values for all participants?
+            consumptionRows = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
+            if consumptionRows.numel() > 0:
+                # print("c2")
+                consumptionRows = consumptionRows.squeeze(dim=-1)
+                cpred = self.consumptionModel.predict(datas[consumptionRows])
+                # print(cpred2.shape, consumptionRows2.shape)
+                pred = pred.index_add(0, consumptionRows, cpred)
+            knowledgeRows = (torch.where(datas[:, -1] == 1, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
+            if knowledgeRows.numel() > 0:
+                # print("k2")
+                knowledgeRows = knowledgeRows.squeeze(dim=-1)
+                kpred = self.knowledgeModel.forward(datas[knowledgeRows])
+                # print(kpred2.shape, knowledgeRows2)
+                pred = pred.index_add(0, knowledgeRows, kpred)
+            physRows = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 1, 1, 0)).nonzero()
+            if physRows.numel() > 0:
+                # print("p2")
+                physRows = physRows.squeeze(dim=-1)
+                ppred = self.physicalModel.forward(datas[physRows])
+                pred = pred.index_add(0, physRows, ppred)
+
         
         return pred
 

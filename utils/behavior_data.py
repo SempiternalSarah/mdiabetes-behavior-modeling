@@ -26,7 +26,8 @@ class BehaviorData:
                  one_hot_response_features=True,
                  response_feature_noise=.05,
                  max_state_week=1,
-                 split_model_features=True):
+                 split_model_features=True,
+                 split_weekly_questions=False):
         # minw, maxw: min and max weeks to collect behavior from
         # include_pid: should the participant id be a feature to the model
         # include_state: should the participant state be a feature
@@ -63,12 +64,14 @@ class BehaviorData:
         # calculate file name for storing/loading data
         # whether to zero out state features (off at first, experiment.py will turn on)
         self.zeroStateFeatures = False
+        # whether to have one question per week
+        self.split_weekly_questions = split_weekly_questions
 
         # adds extra features denoting the category of each question
         # (consumption, exercise, knowledge)
         self.split_model_features = split_model_features
 
-        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.full_sequence}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}.pickle"
+        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.full_sequence}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}{self.split_weekly_questions}.pickle"
 
         
 
@@ -87,11 +90,11 @@ class BehaviorData:
         # used to replace non responses with the model's prediction
         for idx, feature in enumerate(self.featureList):
             if (self.full_sequence):
-                if (feature == "response0_1"):
+                if (feature == "response0_q1"):
                     self.responseIdx = idx
                     break
             else:
-                if (feature == "response_last_1"):
+                if (feature == "response_last_q1"):
                     self.responseIdx = idx
                     break
             
@@ -425,6 +428,10 @@ class BehaviorData:
         # nonzero() returns a 1 element tuple, unpack, take 0th entry off (it's 0)
         # convert to list for later use
         self.nzindices = d["pid"].diff().to_numpy().nonzero()[0][1:].tolist()
+        # if we're splitting the rows into 2, double split values
+        if (self.split_weekly_questions):
+            for x in range(len(self.nzindices)):
+                self.nzindices[x] = self.nzindices[x] * 2
         return d
     
     def encode(self, data: pd.DataFrame):
@@ -432,12 +439,15 @@ class BehaviorData:
         # data: pd.DataFrame
         X, Y = [], []
         for idx, row in data.iterrows():
-            x, y, featureList = self.encode_row(row)
-            X.append(x)
-            Y.append(y)
+            x1, x2, y1, y2, featureList = self.encode_row(row)
+            X.append(x1)
+            Y.append(y1)
+            # returns not none x2 if data is one question per row
+            if x2 is not None:
+                X.append(x2)
+                Y.append(y2)
         X, Y = np.stack(X), np.stack(Y)
         print(X.shape, Y.shape, len(featureList))
-        print(X[:, -4:])
         return torch.tensor(X).float(), torch.tensor(Y).float(), np.array(featureList)
                 
     def encode_row(self, row):
@@ -509,28 +519,28 @@ class BehaviorData:
                     for r in row[f"response{week}"]:
                         encoding = onehot_response(r, 3)
                         X = np.append(X, encoding)
-                    featureList += [f"response{week}_1"] * 3
-                    featureList += [f"response{week}_2"] * 3
+                    featureList += [f"response{week}_q1"] * 3
+                    featureList += [f"response{week}_q2"] * 3
                 else:
                     X = np.append(X, row[f"response{week}"])
-                    featureList += [f"response{week}_1", f"response{week}_2"]
+                    featureList += [f"response{week}_q1", f"response{week}_q2"]
         else:
             if (self.oneHotResponseFeatures):
                 for r in row[f"response_last"]:
                     encoding = onehot_response(r, 3)
                     X = np.append(X, encoding)
-                featureList += [f"response_last_1"] * 3
-                featureList += [f"response_last_2"] * 3
+                featureList += [f"response_last_q1"] * 3
+                featureList += [f"response_last_q2"] * 3
             else:
                 X = np.append(X, row["response_last"])
-                featureList += ["response_last_1", "response_last_2"]
+                featureList += ["response_last_q1", "response_last_q2"]
         
         for j in range(len(feats_to_enc)):
             for k in range(len(feats_to_enc[j])):
                 # encode the feature and add it to our feat vector
                 bin_feat = _padded_binary(feats_to_enc[j][k],ls[j])
                 X = np.append(X, bin_feat)
-                featureList += [f"{elems[j]}_{k}"] * len(bin_feat)
+                featureList += [f"{elems[j]}_q{k+1}"] * len(bin_feat)
         
         if self.split_model_features:
             with open("question_state_element_map.json", 'r') as fp:
@@ -547,13 +557,42 @@ class BehaviorData:
             for idx, qid in enumerate(row["qids"]):
                 bin_feat = _padded_binary(qCatDict[qid], 3)
                 X = np.append(X, bin_feat)
-                featureList += [f"Q{idx}_cat"] * len(bin_feat)
+                featureList += [f"q{idx+1}_cat"] * len(bin_feat)
             
         # responses are the labels
-        Y = np.array([])
-        for i,r in enumerate(row["response"]):
-            Y = np.append(Y, _onehot(r,4))
-        return X, Y, featureList
+        Y1 = np.array([])
+        # go in and split data into 2 rows if desired
+        if self.split_weekly_questions:
+            Y2 = np.array([])
+            # fill both labels
+            for i,r in enumerate(row["response"]):
+                if (i == 0):
+                    Y1 = np.append(Y1, _onehot(r,4))
+                else:
+                    Y2 = np.append(Y2, _onehot(r,4))
+            # now split rows
+            X1 = np.array([])
+            X2 = np.array([])
+            featureListFinal = []
+            for idx, name in enumerate(featureList):
+                if "q1" in name:
+                    X1 = np.append(X1, X[idx])
+                    featureListFinal.append(name)
+                elif "q2" in name:
+                    X2 = np.append(X2, X[idx])
+                # both rows get all non question specific features
+                else:
+                    X1 = np.append(X1, X[idx])
+                    X2 = np.append(X2, X[idx])
+                    featureListFinal.append(name)
+            featureList = featureListFinal
+        else:
+            X2 = None
+            Y2 = None
+            for i,r in enumerate(row["response"]):
+                Y1 = np.append(Y1, _onehot(r,4))
+        
+        return X1, X2, Y1, Y2, featureList
     
     def save(self):
         out = {"data": self.data, "features": self.features, "labels":self.labels, "featureList": self.featureList, "nzIndices": self.nzindices}
@@ -570,5 +609,8 @@ class BehaviorData:
     @property
     def dimensions(self):
         # helper to get the x and y input dimensions
-        return self.features.shape[1], self.labels.shape[1] - 2
+        if (self.split_weekly_questions):
+            return self.features.shape[1], self.labels.shape[1] - 1
+        else:
+            return self.features.shape[1], self.labels.shape[1] - 2
         

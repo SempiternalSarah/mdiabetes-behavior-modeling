@@ -19,7 +19,8 @@ class Base(nn.Module):
                  optimizer="Adam", opt_kw={"lr": 1e-3},
                  labelSmoothPerc = 0.0, gaussianNoiseStd = 0.0,
                  numTimesteps = 24,
-                 splitModel = False):
+                 splitModel = False,
+                 splitWeeklyQuestions = False):
         # define all inputs to the model
         # input_size:   # features in input
         # hidden_size:  # size of hidden layer
@@ -40,6 +41,7 @@ class Base(nn.Module):
         self.gaussianNoiseStd = gaussianNoiseStd
         self.numTimesteps = numTimesteps
         self.splitModel = splitModel
+        self.splitWeeklyQuestions = splitWeeklyQuestions
         
         
     def forward(self, x):
@@ -81,11 +83,11 @@ class Base(nn.Module):
             k = self.output_size
         else:
             k = self.output_size // 2
-        pred = pred.view((y.shape[0], k*2))
-        
-        # reshape preds/labels so that one question = one row
-        pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
-        y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
+        if not self.splitWeeklyQuestions:
+            pred = pred.view((y.shape[0], k*2))
+            # reshape preds/labels so that one question = one row
+            pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
+            y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
         # calculate loss, ignoring nonresponses
         pred = pred[y[:, 0] != 1]
         y = y[y[:, 0] != 1]
@@ -114,9 +116,11 @@ class Base(nn.Module):
             k = self.output_size
         else:
             k = self.output_size // 2
+        # reshape so 1 response = 1 row if needed
+        if not self.splitWeeklyQuestions:
+            pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
+            y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
         # calculate loss, ignoring nonresponses
-        pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
-        y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
         pred = pred[y[:, 0] != 1]
         y = y[y[:, 0] != 1]
         if (y.numel() > 0):

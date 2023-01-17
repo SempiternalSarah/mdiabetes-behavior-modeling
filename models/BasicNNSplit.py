@@ -7,8 +7,7 @@ from models.base import Base, N_RESP_CATEGORIES
 class BasicNNSplit(Base):
     
     def __init__(self, *args, **kw):
-        # Simple model: lstm block with two linear output layers,
-        #    one to predict the response of either label (question)
+        # Simple model: lstm block with one linear output layer
         # input_size:  size of linear input to model
         # hidden_size: size of lstm hidden layer
         # output_size: size of output label of data
