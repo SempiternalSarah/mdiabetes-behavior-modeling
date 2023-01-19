@@ -179,7 +179,7 @@ class Experiment:
                 consumptionRows2 += datas.shape[0]
                 # print(cpred2.shape, consumptionRows2.shape)
                 pred = pred.index_add(0, consumptionRows2, cpred2)
-            knowledgeRows2 = (torch.where(datas[:, -1] == 1, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
+            knowledgeRows2 = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 1, 1, 0)).nonzero()
             if knowledgeRows2.numel() > 0:
                 # print("k2")
                 knowledgeRows2 = knowledgeRows2.squeeze(dim=-1)
@@ -189,7 +189,7 @@ class Experiment:
                 knowledgeRows2 += datas.shape[0]
                 # print(kpred2.shape, knowledgeRows2)
                 pred = pred.index_add(0, knowledgeRows2, kpred2)
-            physRows2 = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 1, 1, 0)).nonzero()
+            physRows2 = (torch.where(datas[:, -1] == 1, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
             if physRows2.numel() > 0:
                 # print("p2")
                 physRows2 = physRows2.squeeze(dim=-1)
@@ -204,13 +204,13 @@ class Experiment:
                 consumptionRows1 = consumptionRows1.squeeze(dim=-1)
                 cpred1 = self.consumptionModel.forward(datas[consumptionRows1])
                 pred = pred.index_add(0, consumptionRows1, cpred1)
-            knowledgeRows1 = (torch.where(datas[:, -3] == 1, 1, 0) * torch.where(datas[:, -4] == 0, 1, 0)).nonzero()
+            knowledgeRows1 = (torch.where(datas[:, -3] == 0, 1, 0) * torch.where(datas[:, -4] == 1, 1, 0)).nonzero()
             if knowledgeRows1.numel() > 0:
                 # print("k1")
                 knowledgeRows1 = knowledgeRows1.squeeze(dim=-1)
                 kpred1 = self.knowledgeModel.forward(datas[knowledgeRows1])
                 pred = pred.index_add(0, knowledgeRows1, kpred1)
-            physRows1 = (torch.where(datas[:, -3] == 0, 1, 0) * torch.where(datas[:, -4] == 1, 1, 0)).nonzero()
+            physRows1 = (torch.where(datas[:, -3] == 1, 1, 0) * torch.where(datas[:, -4] == 0, 1, 0)).nonzero()
             if physRows1.numel() > 0:
                 physRows1 = physRows1.squeeze(dim=-1)
                 # print("p1", physRows1, datas)
@@ -233,14 +233,14 @@ class Experiment:
                 cpred = self.consumptionModel.forward(datas[consumptionRows])
                 # print(cpred2.shape, consumptionRows2.shape)
                 pred = pred.index_add(0, consumptionRows, cpred)
-            knowledgeRows = (torch.where(datas[:, -1] == 1, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
+            knowledgeRows = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 1, 1, 0)).nonzero()
             if knowledgeRows.numel() > 0:
                 # print("k2")
                 knowledgeRows = knowledgeRows.squeeze(dim=-1)
                 kpred = self.knowledgeModel.forward(datas[knowledgeRows])
                 # print(kpred2.shape, knowledgeRows2)
                 pred = pred.index_add(0, knowledgeRows, kpred)
-            physRows = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 1, 1, 0)).nonzero()
+            physRows = (torch.where(datas[:, -1] == 1, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
             if physRows.numel() > 0:
                 # print("p2")
                 physRows = physRows.squeeze(dim=-1)

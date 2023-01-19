@@ -79,7 +79,7 @@ class AdaptableLSTM(Base):
                 # add them to the tensor after all values for weekly question 1
                 # print(cpred2.shape, consumptionRows2.shape)
                 pred = pred.index_add(0, consumptionRows2 + datas.shape[0], cpred2)
-            knowledgeRows2 = (torch.where(x[:, -1] == 1, 1, 0) * torch.where(x[:, -2] == 0, 1, 0)).nonzero()
+            knowledgeRows2 = (torch.where(x[:, -1] == 0, 1, 0) * torch.where(x[:, -2] == 1, 1, 0)).nonzero()
             if knowledgeRows2.numel() > 0:
                 # print("k2")
                 knowledgeRows2 = knowledgeRows2.squeeze(dim=-1)
@@ -88,7 +88,7 @@ class AdaptableLSTM(Base):
                 # add them to the tensor after all values for weekly question 1
                 # print(kpred2.shape, knowledgeRows2)
                 pred = pred.index_add(0, knowledgeRows2 + datas.shape[0], kpred2)
-            physRows2 = (torch.where(x[:, -1] == 0, 1, 0) * torch.where(x[:, -2] == 1, 1, 0)).nonzero()
+            physRows2 = (torch.where(x[:, -1] == 1, 1, 0) * torch.where(x[:, -2] == 0, 1, 0)).nonzero()
             if physRows2.numel() > 0:
                 # print("p2")
                 physRows2 = physRows2.squeeze(dim=-1)
@@ -102,13 +102,13 @@ class AdaptableLSTM(Base):
                 consumptionRows1 = consumptionRows1.squeeze(dim=-1)
                 cpred1 = self.consumptionLayer(datas[consumptionRows1])
                 pred = pred.index_add(0, consumptionRows1, cpred1)
-            knowledgeRows1 = (torch.where(x[:, -3] == 1, 1, 0) * torch.where(x[:, -4] == 0, 1, 0)).nonzero()
+            knowledgeRows1 = (torch.where(x[:, -3] == 0, 1, 0) * torch.where(x[:, -4] == 1, 1, 0)).nonzero()
             if knowledgeRows1.numel() > 0:
                 # print("k1")
                 knowledgeRows1 = knowledgeRows1.squeeze(dim=-1)
                 kpred1 = self.knowledgeLayer(datas[knowledgeRows1])
                 pred = pred.index_add(0, knowledgeRows1, kpred1)
-            physRows1 = (torch.where(x[:, -3] == 0, 1, 0) * torch.where(x[:, -4] == 1, 1, 0)).nonzero()
+            physRows1 = (torch.where(x[:, -3] == 1, 1, 0) * torch.where(x[:, -4] == 0, 1, 0)).nonzero()
             if physRows1.numel() > 0:
                 physRows1 = physRows1.squeeze(dim=-1)
                 # print("p1", physRows1, datas)
@@ -130,14 +130,14 @@ class AdaptableLSTM(Base):
                 cpred = self.consumptionLayer(datas[consumptionRows])
                 # print(cpred2.shape, consumptionRows2.shape)
                 pred = pred.index_add(0, consumptionRows, cpred)
-            knowledgeRows = (torch.where(x[:, -1] == 1, 1, 0) * torch.where(x[:, -2] == 0, 1, 0)).nonzero()
+            knowledgeRows = (torch.where(x[:, -1] == 0, 1, 0) * torch.where(x[:, -2] == 1, 1, 0)).nonzero()
             if knowledgeRows.numel() > 0:
                 # print("k2")
                 knowledgeRows = knowledgeRows.squeeze(dim=-1)
                 kpred = self.knowledgeLayer(datas[knowledgeRows])
                 # print(kpred2.shape, knowledgeRows2)
                 pred = pred.index_add(0, knowledgeRows, kpred)
-            physRows = (torch.where(x[:, -1] == 0, 1, 0) * torch.where(x[:, -2] == 1, 1, 0)).nonzero()
+            physRows = (torch.where(x[:, -1] == 1, 1, 0) * torch.where(x[:, -2] == 0, 1, 0)).nonzero()
             if physRows.numel() > 0:
                 # print("p2")
                 physRows = physRows.squeeze(dim=-1)
