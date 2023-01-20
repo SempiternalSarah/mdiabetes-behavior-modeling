@@ -19,4 +19,7 @@ class LogisticRegressor(Base):
     def forward(self, x):
         preds = self.linear(x)
         # softmax per question, recombine
-        return torch.cat([self.softmax(preds[:, 0:(self.output_size//2)]), self.softmax(preds[:, (self.output_size//2):])], -1)
+        if (self.splitModel or self.splitWeeklyQuestions):
+            return self.softmax(preds)
+        else:
+            return torch.cat([self.softmax(preds[:, 0:(self.output_size//2)]), self.softmax(preds[:, (self.output_size//2):])], -1)

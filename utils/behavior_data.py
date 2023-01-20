@@ -556,14 +556,14 @@ class BehaviorData:
                 featureList += [f"{elems[j]}_q{k+1}"] * len(bin_feat)
         
         if self.split_model_features:
-            with open("question_state_element_map.json", 'r') as fp:
+            with open("detailed_question_state_element_map.json", 'r') as fp:
                 qmap = json.loads(fp.read())
             qCatDict = {}
             for key in qmap.keys():
                 for elem in qmap[key]:
-                    if (key == '1' or key == '2'):
+                    if int(key) < 9:
                         qCatDict[elem] = 0
-                    elif (key == '3'):
+                    elif int(key) < 13:
                         qCatDict[elem] = 1
                     else:
                         qCatDict[elem] = 2

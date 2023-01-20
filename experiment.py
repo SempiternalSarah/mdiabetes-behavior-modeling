@@ -435,19 +435,21 @@ class Experiment:
     
     def report_scores(self):
         with torch.no_grad():
-            preds, labels = None, None
+            preds, labels, datas = None, None, None
             for indx in self.bd.test:
                 # extract one participants data
                 data = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
                 pred = self.getPrediction(data)
                 if (preds == None):
+                    datas = data
                     preds = pred
                     labels = label
                 else: 
+                    datas = torch.cat([datas, data], dim = 0)
                     preds = torch.cat([preds, pred], dim = 0)
                     labels = torch.cat([labels, label], dim = 0)
-            scores, label = self.model.report_scores_min(labels, preds)
+            scores, label = self.model.report_scores_min(labels, preds, datas)
             return scores, label
     
     def report_scores_individual_test(self):
@@ -458,7 +460,7 @@ class Experiment:
                 data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
                 pred = self.getPrediction(data)
-                score, label = self.model.report_scores_min(label, pred)
+                score, label = self.model.report_scores_min(label, pred, data)
                 if (len(score) > 0):
                     scores.append(score)
             return np.array(scores), label
@@ -471,7 +473,7 @@ class Experiment:
                 data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
                 pred = self.getPrediction(data)
-                score, label = self.model.report_scores_min(label, pred)
+                score, label = self.model.report_scores_min(label, pred, data)
                 if (len(score) > 0):
                     scores.append(score)
             return np.array(scores), label
@@ -479,7 +481,7 @@ class Experiment:
     
     def report_scores_train(self):
         with torch.no_grad():
-            preds, labels = None, None
+            preds, labels, datas = None, None, None
             for indx in self.bd.train:
                 # extract one participants data
                 data  = self.bd.get_features(indx)
@@ -488,27 +490,31 @@ class Experiment:
                 if (preds == None):
                     preds = pred
                     labels = label
-                else: 
+                    datas = data
+                else:
+                    datas = torch.cat([datas, data], dim = 0)
                     preds = torch.cat([preds, pred], dim = 0)
                     labels = torch.cat([labels, label], dim = 0)
-            scores, label = self.model.report_scores_min(labels, preds)
+            scores, label = self.model.report_scores_min(labels, preds, datas)
             return scores, label
 
     def report_scores_subset(self, subset):
         with torch.no_grad():
-            preds, labels = None, None
+            preds, labels, datas = None, None, None
             for indx in subset:
                 # extract one participants data
                 data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
                 pred = self.getPrediction(data)
                 if (preds == None):
+                    datas = data
                     preds = pred
                     labels = label
                 else: 
+                    datas = torch.cat([datas, data], dim = 0)
                     preds = torch.cat([preds, pred], dim = 0)
                     labels = torch.cat([labels, label], dim = 0)
-            scores, label = self.model.report_scores_min(labels, preds)
+            scores, label = self.model.report_scores_min(labels, preds, datas)
             return scores, label
         
             

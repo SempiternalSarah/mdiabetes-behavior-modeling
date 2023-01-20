@@ -14,13 +14,20 @@ class BasicNN(Base):
         # output_size: size of output label of data
         super().__init__(*args, **kw)
         self.inputLayer = nn.Linear(self.input_size, self.hidden_size)
-        self.fc_q1 = nn.Linear(self.hidden_size, self.output_size//2)
-        self.fc_q2 = nn.Linear(self.hidden_size, self.output_size//2)
+        if self.splitWeeklyQuestions or self.splitModel:
+            outputSize = self.output_size
+        else:
+            outputSize = self.output_size // 2
+        self.fc_q1 = nn.Linear(self.hidden_size, outputSize)
+        self.fc_q2 = nn.Linear(self.hidden_size, outputSize)
         self.relu = nn.ReLU()
     
     def forward(self, x):
         output = self.inputLayer(x) 
         out = self.relu(output)
         out_q1 = self.fc_q1(out).softmax(-1)
-        out_q2 = self.fc_q2(out).softmax(-1)
-        return torch.cat([out_q1, out_q2],-1)
+        if (self.splitModel or self.splitWeeklyQuestions):
+            return out_q1
+        else:
+            out_q2 = self.fc_q2(out).softmax(-1)
+            return torch.cat([out_q1, out_q2],-1)

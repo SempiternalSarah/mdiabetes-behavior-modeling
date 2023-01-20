@@ -110,17 +110,25 @@ class Base(nn.Module):
         return loss
             
 
-    def report_scores_min(self, y, pred):
+    def report_scores_min(self, y, pred, data):
         if self.splitWeeklyQuestions or self.splitModel:
             k = self.output_size
         else:
             k = self.output_size // 2
+
+        # separate out category labels
+        if (self.splitWeeklyQuestions):
+            data = data[:, -2:]
+        else:
+            data = data[:, -4:]
         # reshape so 1 response = 1 row if needed
         if not self.splitWeeklyQuestions:
             pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
             y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
+            data = torch.cat([data[:, 0:2], data[:, 2:]], 0)
         # calculate loss, ignoring nonresponses
         pred = pred[y[:, 0] != 1]
+        data = data[y[:, 0] != 1]
         y = y[y[:, 0] != 1]
         if (y.numel() > 0):
             crit = torch.nn.MSELoss()
@@ -134,7 +142,6 @@ class Base(nn.Module):
             sm = torch.nn.Softmax(dim=1)
             predValues = torch.nn.functional.one_hot(torch.argmax(pred, dim=1), num_classes=k)
             class_precision, class_recall = torchmetrics.functional.precision_recall(pred.argmax(dim=1), y[:, 1:].argmax(dim=1), average='none', num_classes=k)
-            precision, recall = torchmetrics.functional.precision_recall(pred.argmax(dim=1), y[:, 1:].argmax(dim=1))
             accuracy = (predValues * y[:, 1:]).sum() / y.shape[0]
             # filter predicted classes by true class
             pred1 = predValues[y[:, 1] == 1]
@@ -144,6 +151,24 @@ class Base(nn.Module):
             acc1 = (pred1[:, 0].sum()) / pred1.shape[0]
             acc2 = (pred2[:, 1].sum()) / pred2.shape[0]
             acc3 = (pred3[:, 2].sum()) / pred3.shape[0]
+
+            # record per category accuracy
+            if (self.splitModel):
+                classLabels = ["AccConsumption", "AccExercise", "AccKnowledge"]
+                consumptionRows = (torch.where(data[:, -1] == 0, 1, 0) * torch.where(data[:, -2] == 0, 1, 0)).nonzero()
+                knowledgeRows = (torch.where(data[:, -1] == 0, 1, 0) * torch.where(data[:, -2] == 1, 1, 0)).nonzero()
+                physRows = (torch.where(data[:, -1] == 1, 1, 0) * torch.where(data[:, -2] == 0, 1, 0)).nonzero()
+                conRows, conYs = predValues[consumptionRows], y[consumptionRows, 1:]
+                exerRows, exerYs = predValues[physRows], y[physRows, 1:]
+                knowRows, knowYs = predValues[knowledgeRows], y[knowledgeRows, 1:]
+                consumptionAcc = (conRows * conYs).sum() / conRows.shape[0]
+                exerciseAcc = (exerRows * exerYs).sum() / exerRows.shape[0]
+                knowledgeAcc = (knowRows * knowYs).sum() / knowRows.shape[0]
+                classStats = [consumptionAcc, exerciseAcc, knowledgeAcc]
+            else:
+                classLabels = []
+                classStats = []
+                
             # per timestep accuracy
             timeAcc = []
             timeLabels = []
@@ -151,7 +176,7 @@ class Base(nn.Module):
                 indices = np.arange(x, predValues.shape[0], self.numTimesteps)
                 timeAcc.append((predValues[indices] * y[indices, 1:]).sum() / len(indices))
                 timeLabels.append(f"Week{x}Acc")
-            return np.array([mseloss.item(), celoss.item(), ndcg.item(), mrr.item(), accuracy.item(), precision.item(), recall.item(), acc1, acc2, acc3, class_precision[0].item(), class_precision[1].item(), class_precision[2].item(), class_recall[0].item(), class_recall[1].item(), class_recall[2].item(), pred1.shape[0], pred2.shape[0], pred3.shape[0]] + timeAcc), ["MSE", "CE", "NDCG", "MRR", "Acc","Prec", "Rec", "Acc1", "Acc2", "Acc3", "Prec1", "Prec2", "Prec3", "Rec1", "Rec2", "Rec3", "Count1", "Count2", "Count3"] + timeLabels
+            return np.array([mseloss.item(), celoss.item(), ndcg.item(), mrr.item(), accuracy.item()] + classStats + [acc1, acc2, acc3, class_precision[0].item(), class_precision[1].item(), class_precision[2].item(), class_recall[0].item(), class_recall[1].item(), class_recall[2].item(), pred1.shape[0], pred2.shape[0], pred3.shape[0]] + timeAcc), ["MSE", "CE", "NDCG", "MRR", "Acc"] + classLabels + ["Acc1", "Acc2", "Acc3", "Prec1", "Prec2", "Prec3", "Rec1", "Rec2", "Rec3", "Count1", "Count2", "Count3"] + timeLabels
         else:
             return [], ["MSE", "CE", "NDCG", "MRR", "Acc", "ResCount"]
                      

@@ -11,3 +11,4 @@ data/
 **/hidden_size_experiment_output
 *.pickle
 *.zip
+**/TEMP
