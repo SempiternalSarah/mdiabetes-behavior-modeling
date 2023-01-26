@@ -110,7 +110,7 @@ class Base(nn.Module):
             if not trainPhys:
                 mask[physRows] = False
             pred = pred[mask]
-            y = y[mask] 
+            y = y[mask]
 
         if (pred.numel() <= 0):
             return None

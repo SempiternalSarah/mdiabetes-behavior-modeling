@@ -167,7 +167,7 @@ class Experiment:
         return p1, p2, p3
 
     # get prediction for sequence of data
-    def getPrediction(self, datas):
+    def getPrediction(self, datas, reporting=True):
         if not self.modelSplit:
             pred = self.model.forward(datas)
         elif not self.bd.split_weekly_questions:
@@ -177,7 +177,7 @@ class Experiment:
             # then, recombine the predictions using the indices
             # consider computing these indices ahead of time and storing values for all participants?
             consumptionRows2 = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
-            if consumptionRows2.numel() > 0:
+            if consumptionRows2.numel() > 0 and (reporting or self.trainConsumption):
                 # print("c2")
                 consumptionRows2 = consumptionRows2.squeeze(dim=-1)
                 cpred2 = self.consumptionModel.forward(datas[consumptionRows2])
@@ -187,7 +187,7 @@ class Experiment:
                 # print(cpred2.shape, consumptionRows2.shape)
                 pred = pred.index_add(0, consumptionRows2, cpred2)
             knowledgeRows2 = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 1, 1, 0)).nonzero()
-            if knowledgeRows2.numel() > 0:
+            if knowledgeRows2.numel() > 0 and (reporting or self.trainKnowledge):
                 # print("k2")
                 knowledgeRows2 = knowledgeRows2.squeeze(dim=-1)
                 kpred2 = self.knowledgeModel.forward(datas[knowledgeRows2])
@@ -197,7 +197,7 @@ class Experiment:
                 # print(kpred2.shape, knowledgeRows2)
                 pred = pred.index_add(0, knowledgeRows2, kpred2)
             physRows2 = (torch.where(datas[:, -1] == 1, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
-            if physRows2.numel() > 0:
+            if physRows2.numel() > 0 and (reporting or self.trainPhysical):
                 # print("p2")
                 physRows2 = physRows2.squeeze(dim=-1)
                 ppred2 = self.physicalModel.forward(datas[physRows2])
@@ -206,19 +206,19 @@ class Experiment:
                 physRows2 += datas.shape[0]
                 pred = pred.index_add(0, physRows2, ppred2)
             consumptionRows1 = (torch.where(datas[:, -3] == 0, 1, 0) * torch.where(datas[:, -4] == 0, 1, 0)).nonzero()
-            if consumptionRows1.numel() > 0:
+            if consumptionRows1.numel() > 0 and (reporting or self.trainConsumption):
                 # print("c1")
                 consumptionRows1 = consumptionRows1.squeeze(dim=-1)
                 cpred1 = self.consumptionModel.forward(datas[consumptionRows1])
                 pred = pred.index_add(0, consumptionRows1, cpred1)
             knowledgeRows1 = (torch.where(datas[:, -3] == 0, 1, 0) * torch.where(datas[:, -4] == 1, 1, 0)).nonzero()
-            if knowledgeRows1.numel() > 0:
+            if knowledgeRows1.numel() > 0 and (reporting or self.trainKnowledge):
                 # print("k1")
                 knowledgeRows1 = knowledgeRows1.squeeze(dim=-1)
                 kpred1 = self.knowledgeModel.forward(datas[knowledgeRows1])
                 pred = pred.index_add(0, knowledgeRows1, kpred1)
             physRows1 = (torch.where(datas[:, -3] == 1, 1, 0) * torch.where(datas[:, -4] == 0, 1, 0)).nonzero()
-            if physRows1.numel() > 0:
+            if physRows1.numel() > 0 and (reporting or self.trainPhysical):
                 physRows1 = physRows1.squeeze(dim=-1)
                 # print("p1", physRows1, datas)
                 ppred1 = self.physicalModel.forward(datas[physRows1])
@@ -234,21 +234,21 @@ class Experiment:
             # then, recombine the predictions using the indices
             # consider computing these indices ahead of time and storing values for all participants?
             consumptionRows = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
-            if consumptionRows.numel() > 0:
+            if consumptionRows.numel() > 0 and (reporting or self.trainConsumption):
                 # print("c2")
                 consumptionRows = consumptionRows.squeeze(dim=-1)
                 cpred = self.consumptionModel.forward(datas[consumptionRows])
                 # print(cpred2.shape, consumptionRows2.shape)
                 pred = pred.index_add(0, consumptionRows, cpred)
             knowledgeRows = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 1, 1, 0)).nonzero()
-            if knowledgeRows.numel() > 0:
+            if knowledgeRows.numel() > 0 and (reporting or self.trainKnowledge):
                 # print("k2")
                 knowledgeRows = knowledgeRows.squeeze(dim=-1)
                 kpred = self.knowledgeModel.forward(datas[knowledgeRows])
                 # print(kpred2.shape, knowledgeRows2)
                 pred = pred.index_add(0, knowledgeRows, kpred)
             physRows = (torch.where(datas[:, -1] == 1, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
-            if physRows.numel() > 0:
+            if physRows.numel() > 0 and (reporting or self.trainPhysical):
                 # print("p2")
                 physRows = physRows.squeeze(dim=-1)
                 ppred = self.physicalModel.forward(datas[physRows])
@@ -343,8 +343,8 @@ class Experiment:
             # record metrics every rec_every epochs
             if (e%rec_every) == 0 or e == epochs - 1:
                 # for model in [self.consumptionModel, self.knowledgeModel, self.physicalModel]:
-                #     for param in model.parameters():
-                #         print(param)
+                # for param in self.physicalModel.parameters():
+                #     print(param)
                 stored_losses.append(lh)
                 metrics, labels = self.report_scores_train()
                 train_metrics.append(metrics)
@@ -352,6 +352,9 @@ class Experiment:
                 test_metrics.append(tmetrics)
                 # print(len(labels))
                 # print(len(metrics), len(tmetrics))
+                # print(self.trainKnowledge, self.trainPhysical, self.trainConsumption)
+                # print(lh)
+                # print(self.model.lstm.parameters())
                 print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}")
             for sched in scheds:
                 sched.step()
@@ -418,7 +421,7 @@ class Experiment:
             # for non LSTM models, the participants data is batched by week
             # no special trick here - the dimensions work to be non batched in LSTM (as desired)
             # and batched by week for non LSTM models (also as desired)
-            pred = self.getPrediction(data)
+            pred = self.getPrediction(data, reporting=False)
             
 
             # we have to predict with one sequence at a time and then
@@ -436,12 +439,20 @@ class Experiment:
         if (loss1 != None):
             loss.append(loss1)
             loss1.backward()
-            if not self.trainConsumption or not self.trainKnowledge or not self.trainPhysical:      
+            if (not self.trainConsumption) or (not self.trainKnowledge) or (not self.trainPhysical): 
+                # print("????")     
                 if hasattr(self.model, 'lstm'):
-                    self.model.lstm.zero_grad()
+                    # for param in self.model.named_parameters():
+                    #     print(param)
+                    self.model.lstm.weight_ih_l0.grad = None
+                    self.model.lstm.bias_ih_l0.grad = None
+                    self.model.lstm.weight_hh_l0.grad = None
+                    self.model.lstm.bias_hh_l0.grad = None
             for opt in opts:
                 opt.step()
             loss = [l1.item() for l1 in loss]
+        else:
+            loss = [-1]
         return loss
     
     def evaluate(self):
