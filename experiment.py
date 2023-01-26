@@ -5,7 +5,7 @@ import importlib
 
 class Experiment:
     
-    def __init__(self, data_kw={}, model="BasicLSTM", model_kw={}, train_kw={}, numValFolds=5, epochsToUpdateLabelMods=5, stateZeroEpochs=0, modelSplit=False):
+    def __init__(self, data_kw={}, model="BasicLSTM", model_kw={}, train_kw={}, numValFolds=5, epochsToUpdateLabelMods=5, stateZeroEpochs=0, modelSplit=False, knowSchedule=[], physSchedule=[], consumpSchedule=[]):
         # data_kw:  dict of keyword arguments to BehaviorData instance
         # model_kw: dict of keyword arguments for Model instance
         # train_kw: dict of keyword arguments for training loop
@@ -19,6 +19,13 @@ class Experiment:
         # every x epochs
         # used to replace non responses with predicted responses
         self.epochsToUpdateLabelMods = epochsToUpdateLabelMods
+
+        self.knowSchedule = knowSchedule
+        self.physSchedule = physSchedule
+        self.consumpSchedule = consumpSchedule
+        self.trainKnowledge = True
+        self.trainPhysical = True
+        self.trainConsumption = True
 
         self.bd = BehaviorData(**data_kw)
 
@@ -256,6 +263,7 @@ class Experiment:
         loss = []
         preds = None
         labels = None
+        datas = None
         opt.zero_grad()
         for indx in trainSet:
             # extract one participants data
@@ -269,16 +277,18 @@ class Experiment:
             if (preds == None):
                 preds = pred
                 labels = label
+                datas = data
             else: 
                 preds = torch.cat([preds, pred], dim = 0)
                 labels = torch.cat([labels, label], dim = 0)
+                datas = torch.cat([datas, data], dim = 0)
             
-        loss1 = self.model.train_step(preds, labels)
+        loss1 = self.model.train_step(preds, labels, datas, self.trainConsumption, self.trainKnowledge, self.trainPhysical)
         if (loss1 != None):
             loss.append(loss1)
-        loss1.backward()
-        opt.step()
-        loss = [l1.item() for l1 in loss]
+            loss1.backward()
+            opt.step()
+            loss = [l1.item() for l1 in loss]
         return loss
     
     # update feature modifications for both train and test data
@@ -315,6 +325,13 @@ class Experiment:
             # enable the zeroing of state features once appropriate
             if (self.stateZeroEpochs > 0 and e == self.stateZeroEpochs):
                 self.bd.zeroStateFeatures = True
+            
+            if e in self.knowSchedule:
+                self.trainKnowledge = not self.trainKnowledge
+            if e in self.consumpSchedule:
+                self.trainConsumption = not self.trainConsumption
+            if e in self.physSchedule:
+                self.trainPhysical = not self.trainPhysical
 
             lh = self.train_epoch(opts)
 
@@ -333,7 +350,9 @@ class Experiment:
                 train_metrics.append(metrics)
                 tmetrics, tlabels = self.report_scores()
                 test_metrics.append(tmetrics)
-                print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}")
+                # print(len(labels))
+                # print(len(metrics), len(tmetrics))
+                print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}")
             for sched in scheds:
                 sched.step()
         
@@ -386,6 +405,7 @@ class Experiment:
         loss = []
         preds = None
         labels = None
+        datas = None
         for opt in opts:
             opt.zero_grad()
         for indx in self.bd.train:
@@ -406,17 +426,22 @@ class Experiment:
             if (preds == None):
                 preds = pred
                 labels = label
+                datas = data
             else: 
                 preds = torch.cat([preds, pred], dim = 0)
                 labels = torch.cat([labels, label], dim = 0)
+                datas = torch.cat([datas, data], dim = 0)
             
-        loss1 = self.model.train_step(preds, labels)
+        loss1 = self.model.train_step(preds, labels, datas, self.trainConsumption, self.trainKnowledge, self.trainPhysical)
         if (loss1 != None):
             loss.append(loss1)
-        loss1.backward()
-        for opt in opts:
-            opt.step()
-        loss = [l1.item() for l1 in loss]
+            loss1.backward()
+            if not self.trainConsumption or not self.trainKnowledge or not self.trainPhysical:      
+                if hasattr(self.model, 'lstm'):
+                    self.model.lstm.zero_grad()
+            for opt in opts:
+                opt.step()
+            loss = [l1.item() for l1 in loss]
         return loss
     
     def evaluate(self):

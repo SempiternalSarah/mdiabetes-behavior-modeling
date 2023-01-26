@@ -55,6 +55,11 @@ class AdaptableLSTM(Base):
             # [SEQ, output_size//2]
             return torch.cat([out_q1, out_q2],-1)
 
+    def train_step(self, pred, y, data, trainConsumption=True, trainKnowledge=True, trainPhys=True):
+        if not trainConsumption or not trainKnowledge or not trainPhys:
+            self.lstm.zero_grad()
+        return super().train_step(pred, y, data, trainConsumption, trainKnowledge, trainPhys)
+
     def forward_split(self, x):
         # One forward pass of input vector/batch x
         # Pass x thru the LSTM cell, then pass output

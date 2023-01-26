@@ -70,7 +70,7 @@ class Base(nn.Module):
         c0 = Variable(torch.zeros(1, self.hidden_size))
         return h0, c0
 
-    def train_step(self, pred, y):
+    def train_step(self, pred, y, data, trainConsumption=True, trainKnowledge=True, trainPhys=True):
         # One optimization step of our model on 
         # predictions pred with labels y
         # make predictions using forward() before calling this function
@@ -78,7 +78,11 @@ class Base(nn.Module):
             crit = NDCG
         else:
             crit = self.make_criterion()
-        # print(pred.shape, y.shape)
+        # separate out category labels
+        if (self.splitWeeklyQuestions):
+            data = data[:, -2:]
+        else:
+            data = data[:, -4:]
         if self.splitWeeklyQuestions or self.splitModel:
             k = self.output_size
         else:
@@ -88,10 +92,29 @@ class Base(nn.Module):
             # reshape preds/labels so that one question = one row
             pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
             y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
+            data = torch.cat([data[:, 0:2], data[:, 2:]], 0)
         # calculate loss, ignoring nonresponses
         pred = pred[y[:, 0] != 1]
+        data = data[y[:, 0] != 1]
         y = y[y[:, 0] != 1]
         y = y[:, 1:]
+        if (self.splitModel):
+            consumptionRows = (torch.where(data[:, -1] == 0, 1, 0) * torch.where(data[:, -2] == 0, 1, 0)).nonzero()
+            knowledgeRows = (torch.where(data[:, -1] == 0, 1, 0) * torch.where(data[:, -2] == 1, 1, 0)).nonzero()
+            physRows = (torch.where(data[:, -1] == 1, 1, 0) * torch.where(data[:, -2] == 0, 1, 0)).nonzero()
+            mask = np.ones(data.shape[0], dtype=bool)
+            if not trainConsumption:
+                mask[consumptionRows] = False
+            if not trainKnowledge:
+                mask[knowledgeRows] = False
+            if not trainPhys:
+                mask[physRows] = False
+            pred = pred[mask]
+            y = y[mask] 
+
+        if (pred.numel() <= 0):
+            return None
+
         # smooth labels for hopefully better overall results
         l = self.labelSmoothPerc
         if (l > 0):
