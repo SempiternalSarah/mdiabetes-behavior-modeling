@@ -21,8 +21,8 @@ class BehaviorData:
                  expanded_states=True,
                  top_respond_perc=1.0,
                  full_questionnaire=False,
-                 full_sequence=False,
                  insert_predictions=False,
+                 num_weeks_history=1,
                  one_hot_response_features=True,
                  response_feature_noise=.05,
                  max_state_week=1,
@@ -32,9 +32,6 @@ class BehaviorData:
         # include_pid: should the participant id be a feature to the model
         # include_state: should the participant state be a feature
         self.oneHotResponseFeatures = one_hot_response_features
-        # whether to include the full sequence of weekly message/question/response
-        # used for simple (non LSTM) models
-        self.full_sequence = full_sequence
         # whether to use feature modifications to replace non responses with predicted responses
         self.insert_predictions = insert_predictions
         # whether to use each question in the questionnaire as features
@@ -50,6 +47,8 @@ class BehaviorData:
         # whether to use new (expanded) state mappings
         # default to true
         self.expanded_states = expanded_states
+        # number of weeks of history (question/message/response) values to include
+        self.num_weeks_history = min(num_weeks_history, 23)
         # whether to include state values as features at all
         # default to true
         self.include_state = include_state
@@ -71,7 +70,7 @@ class BehaviorData:
         # (consumption, exercise, knowledge)
         self.split_model_features = split_model_features
 
-        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.full_sequence}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}{self.split_weekly_questions}.pickle"
+        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.num_weeks_history}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}{self.split_weekly_questions}.pickle"
 
         
 
@@ -89,15 +88,10 @@ class BehaviorData:
         # find index of first response value so we don't have to compute this again
         # used to replace non responses with the model's prediction
         for idx, feature in enumerate(self.featureList):
-            if (self.full_sequence):
-                if (feature == "response0_q1"):
-                    self.responseIdx = idx
-                    break
-            else:
-                if (feature == "response_last_q1"):
-                    self.responseIdx = idx
-                    break
-            
+            if ("response" in feature):
+                self.responseIdx = idx
+                break
+        
 
         self.splitData(train_perc)
 
@@ -148,32 +142,14 @@ class BehaviorData:
             numQs = 2
             k = self.dimensions[1] // 2
 
-        if (self.full_sequence):
-            # iterate through each week (row of this participants data)
-            for i, weekRow in enumerate(self.chunkedFeatures[indx]):
-                # iterate through the responses of weeks before this one
-                for j in range(i):
-                    # get index of this week's response to q1
-                    idx = self.responseIdx + (k * numQs * j)
-                    for offset in range(numQs):
-                        curIdx = idx + k*offset
-                        replace = data[i][curIdx:curIdx + k]
-                        # no feature here yet - may be replaced by predictions later
-                        if (not replace.sum() > 0):
-                            continue
-                        replace += torch.normal(mean=torch.zeros(k), std=self.responseFeatureNoise * torch.ones(k))
-                        # re-normalize labels to ensure no < 0 and that sum = 1
-                        replace[replace < 0] = 0
-                        # divide each row by sum of that row
-                        replace /= replace.sum()
-                        # replace row with normalized
-                        data[i][curIdx:curIdx + k] = replace
-        else:
-            # iterate through each week (row of this participants data)
-            for i, weekRow in enumerate(self.chunkedFeatures[indx]):
-                 # get index of this week's response to q1
+        # iterate through each week (row of this participants data)
+        for i, weekRow in enumerate(self.chunkedFeatures[indx]):
+            # iterate through the responses of weeks before this one
+            for j in range(self.num_weeks_history - 1):
+                # get index of this week's response to q1
+                idx = self.responseIdx + (k * numQs * j)
                 for offset in range(numQs):
-                    curIdx = self.responseIdx + k*offset
+                    curIdx = idx + k*offset
                     replace = data[i][curIdx:curIdx + k]
                     if torch.sum(replace) > 1.01:
                         print("Some problem", replace)
@@ -203,48 +179,33 @@ class BehaviorData:
             k = self.dimensions[1] // 2
         # set up our feature modifications
         mods = np.zeros_like(self.chunkedFeatures[indx].numpy())
-        if (self.full_sequence):
-            # iterate through each week (row of this participants data)
-            for i, weekRow in enumerate(self.chunkedFeatures[indx]):
-                # iterate through the responses of weeks before this one
-                for j in range(i):
-                    # get index of this week's response to q1
-                    if (self.oneHotResponseFeatures):
-                        idx = self.responseIdx + (numQs * k * j)
-                        for offset in range(numQs):
-                            curIdx = idx + k*offset
-                            if weekRow[curIdx] == -1:
-                                mods[i][curIdx:curIdx + k] = 1 + preds[j][offset*k:(k*offset)+k]
-                    else:
-                        idx = self.responseIdx + (numQs * j)
-                        for offset in range(numQs):
-                            if weekRow[idx + offset] == -1:
-                                # first question
-                                if (offset == 0):
-                                    # calculate most likely predicted class and save to use as the feature
-                                    mods[i][idx + offset] = 2 + np.argmax(preds[j][0:k])
-                                    # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
-                                else:
-                                    mods[i][idx + offset] = 2 + np.argmax(preds[j][k:])
-        else:
-            # iterate through each week (row of this participants data)
-            for i, weekRow in enumerate(self.chunkedFeatures[indx]):
-                 # get index of this week's response to q1
-                    if (self.oneHotResponseFeatures):
-                        for offset in range(numQs):
-                            curIdx = self.responseIdx + k*offset
-                            if weekRow[curIdx] == -1:
-                                mods[i][curIdx:curIdx + k] = 1 + preds[i - 1][offset*k:(k*offset)+k]
-                    else:
-                        for offset in range(numQs):
-                            if weekRow[self.responseIdx + offset] == -1:
-                                # first question
-                                if (offset == 0):
-                                    # calculate most likely predicted class and save to use as the feature
-                                    mods[i][self.responseIdx + offset] = 2 + np.argmax(preds[i - 1][0:k])
-                                    # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
-                                else:
-                                    mods[i][self.responseIdx + offset] = 2 + np.argmax(preds[i - 1][k:])
+
+        # iterate through each week (row of this participants data)
+        for i, weekRow in enumerate(self.chunkedFeatures[indx]):
+            # iterate through the responses of weeks before this one
+            for j in range(1, self.num_weeks_history - 1):
+                # weeks before start should be 0
+                if (i - j) < 0:
+                    break
+                # get index of this week's response to q1
+                if (self.oneHotResponseFeatures):
+                    idx = self.responseIdx + (numQs * k * j)
+                    for offset in range(numQs):
+                        curIdx = idx + k*offset
+                        if weekRow[curIdx] == -1:
+                            mods[i][curIdx:curIdx + k] = 1 + preds[j][offset*k:(k*offset)+k]
+                else:
+                    idx = self.responseIdx + (numQs * j)
+                    for offset in range(numQs):
+                        if weekRow[idx + offset] == -1:
+                            # first question
+                            if (offset == 0):
+                                # calculate most likely predicted class and save to use as the feature
+                                mods[i][idx + offset] = 2 + np.argmax(preds[j][0:k])
+                                # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
+                            else:
+                                mods[i][idx + offset] = 2 + np.argmax(preds[j][k:])
+
         self.responseMods[indx] = mods
                     
 
@@ -352,7 +313,7 @@ class BehaviorData:
         # unsure where they come from but they aren't listed in the all_ai_participants.csv
         d = d[d["pid"].isin(list(dict.keys(init_states)))]
 
-        # adjust week values per participant (their first week should be 0, last 24)
+        # adjust week values per participant (their first week should be 0, last 23)
         def adjustWeek(row):
             w = row["week"] - start_weeks[row["pid"]]
             return w
@@ -387,53 +348,33 @@ class BehaviorData:
         # select top responders based on parameter passed in constructor
         d = self.filter_top_responders(d)
         # check if we need to build up the full sequence
-        if (self.full_sequence):
-            # method to insert a week's element into all other rows
-            # TODO: FIGURE OUT HOW TO WRITE THIS MORE EFFICIENTLY
-            def construct_week_elem(row, weekno, elem):
-                if ((weekno < row['week']) or (elem != "response" and weekno == row['week'])):
-                    # use full knowledge of the past
-                    temp = d[d["pid"] == row['pid']]
-                    temp = temp[temp["week"] == weekno]
-                    # set non response to -1 to distinguish from unknown (future) response
-                    if (elem == "response" and 0 in temp.iloc[0][elem]):
-                        vals = []
-                        for val in temp.iloc[0][elem]:
-                            if (val == 0):
-                                vals.append(-1)
-                            else:
-                                vals.append(val)
-                        return tuple(vals)
-                    else:
-                        return tuple(temp.iloc[0][elem])
+        # method to insert a week's element into all other rows
+        # TODO: FIGURE OUT HOW TO WRITE THIS MORE EFFICIENTLY
+        def construct_week_elem(row, weekOffset, elem):
+            weekno = row['week'] - weekOffset
+            if ((weekno > 0) or (elem != "response" and weekno == 0)):
+                # use full knowledge of the past
+                temp = d[d["pid"] == row['pid']]
+                temp = temp[temp["week"] == weekno]
+                # set non response to -1 to distinguish from undefined (before the study) response
+                if (elem == "response" and 0 in temp.iloc[0][elem]):
+                    vals = []
+                    for val in temp.iloc[0][elem]:
+                        if (val == 0):
+                            vals.append(-1)
+                        else:
+                            vals.append(val)
+                    return tuple(vals)
                 else:
-                    # don't use knowledge of the future
-                    return (0, 0)
-            # go through and insert msg/question/response for all weeks as appropriate
-            for elem in ["paction_sids", "pmsg_ids", "qids", "response"]:
-                print(elem)
-                for week in range(24):
-                    d[f"{elem}{week}"] = d.apply(lambda row: construct_week_elem(row, week, elem), axis=1, result_type='reduce')
-        else:
-            def construct_last_week_response(row):
-                if row["week"] > 0:
-                    temp = d[d["pid"] == row['pid']]
-                    temp = temp[temp["week"] == row["week"] - 1]
-                    # set non response to -1 to distinguish from unknown (future) response
-                    if (0 in temp.iloc[0]["response"]):
-                        vals = []
-                        for val in temp.iloc[0]["response"]:
-                            if (val == 0):
-                                vals.append(-1)
-                            else:
-                                vals.append(val)
-                        return tuple(vals)
-                    else:
-                        return tuple(temp.iloc[0]["response"])
-                else:
-                    return (0, 0)
-            for week in range(24):
-                d["response_last"] = d.apply(lambda row: construct_last_week_response(row), axis=1, result_type='reduce')
+                    return tuple(temp.iloc[0][elem])
+            else:
+                # don't use knowledge of the future
+                return (0, 0)
+        # go through and insert msg/question/response for all weeks as appropriate
+        for elem in ["paction_sids", "pmsg_ids", "qids", "response"]:
+            print(elem)
+            for week in range(self.num_weeks_history):
+                d[f"{elem}_last_{week}"] = d.apply(lambda row: construct_week_elem(row, week, elem), axis=1, result_type='reduce')
 
         # record splits between different participants for later
         # basically we want to easily extract individual participant data
@@ -493,14 +434,10 @@ class BehaviorData:
             maxSVal = 17
         else:
             maxSVal = 5
-        if (self.full_sequence):
-            for week in range(24):
-                for elem in ["paction_sids", "pmsg_ids", "qids"]:
-                    elems.append(f"{elem}{week}")
-                ls += [maxSVal,57,32]
-        else:
-            elems = ["paction_sids", "pmsg_ids", "qids"]
-            ls = [maxSVal,57,32]
+        for week in range(self.num_weeks_history):
+            for elem in ["paction_sids", "pmsg_ids", "qids"]:
+                elems.append(f"{elem}_last_{week}")
+            ls += [maxSVal,57,32]
         feats_to_enc = np.array(row[elems].values)
         feats_to_enc = feats_to_enc.tolist()
         
@@ -526,28 +463,17 @@ class BehaviorData:
                         vec -= 1
                     return vec
 
-        if self.full_sequence:
-            for week in range(24):
-                if (self.oneHotResponseFeatures):
-                    for r in row[f"response{week}"]:
-                        encoding = onehot_response(r, 3)
-                        X = np.append(X, encoding)
-                    featureList += [f"response{week}_q1"] * 3
-                    featureList += [f"response{week}_q2"] * 3
-                else:
-                    X = np.append(X, row[f"response{week}"])
-                    featureList += [f"response{week}_q1", f"response{week}_q2"]
-        else:
+        for week in range(1, self.num_weeks_history):
             if (self.oneHotResponseFeatures):
-                for r in row[f"response_last"]:
+                for r in row[f"response_last_{week}"]:
                     encoding = onehot_response(r, 3)
                     X = np.append(X, encoding)
-                featureList += [f"response_last_q1"] * 3
-                featureList += [f"response_last_q2"] * 3
+                featureList += [f"response_last_{week}_q1"] * 3
+                featureList += [f"response_last_{week}_q2"] * 3
             else:
-                X = np.append(X, row["response_last"])
-                featureList += ["response_last_q1", "response_last_q2"]
-        
+                X = np.append(X, row[f"response_last_{week}"])
+                featureList += [f"response_last_{week}_q1", f"response_last_{week}_q2"]
+    
         for j in range(len(feats_to_enc)):
             for k in range(len(feats_to_enc[j])):
                 # encode the feature and add it to our feat vector
