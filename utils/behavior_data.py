@@ -371,7 +371,7 @@ class BehaviorData:
                 # don't use knowledge of the future
                 return (0, 0)
         # go through and insert msg/question/response for all weeks as appropriate
-        for elem in ["paction_sids", "pmsg_ids", "qids", "response"]:
+        for elem in ["pmsg_sids", "paction_sids", "pmsg_ids", "qids", "response"]:
             print(elem)
             for week in range(self.num_weeks_history):
                 d[f"{elem}_last_{week}"] = d.apply(lambda row: construct_week_elem(row, week, elem), axis=1, result_type='reduce')
@@ -435,9 +435,9 @@ class BehaviorData:
         else:
             maxSVal = 5
         for week in range(self.num_weeks_history):
-            for elem in ["paction_sids", "pmsg_ids", "qids"]:
+            for elem in ["pmsg_sids", "paction_sids", "pmsg_ids", "qids"]:
                 elems.append(f"{elem}_last_{week}")
-            ls += [maxSVal,57,32]
+            ls += [maxSVal,maxSVal,57,32]
         feats_to_enc = np.array(row[elems].values)
         feats_to_enc = feats_to_enc.tolist()
         

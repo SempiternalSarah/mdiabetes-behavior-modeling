@@ -34,10 +34,10 @@ class StateData:
         # {pid: [[week_idx, state, action], ...], ...}
         data = []
         cols = ["week", "pid", "state", "cluster", "action_sids", \
-                "msg_ids", "paction_sids", "pmsg_ids", "qids", "response"]
+                "msg_ids", "pmsg_sids", "paction_sids", "pmsg_ids", "qids", "response"]
         for w in range(minw, maxw+1):
             states, clusters, ids, actsids, \
-                msg_ids, pactsids, pmsg_ids, questions, responses = self.weekly_state_data(w)
+                msg_ids, pmsgsids, pactsids, pmsg_ids, questions, responses = self.weekly_state_data(w)
             for i in range(len(responses)):
                 st, clt, pid = states[i], clusters[i], ids[i]
                 st = st.tolist()[:5]
@@ -55,7 +55,7 @@ class StateData:
                         resp[j] = int(resp[j])
                 except:
                     resp = [-1,-1]
-                row = [w, pid, st, clt, actsids[i], msg_ids[i], pactsids[i], \
+                row = [w, pid, st, clt, actsids[i], msg_ids[i], pmsgsids[i], pactsids[i], \
                            pmsg_ids[i], qids, resp]
                 data.append(row)
         data = pd.DataFrame(data, columns=cols)
@@ -76,6 +76,7 @@ class StateData:
         pmsg_ids = []
         questions = []
         responses = []
+        pmsg_sids = []
         for c, pid in enumerate(ids):
             r = resp[resp['ID']==pid.item()]
             if r.shape[0] == 0:
@@ -85,10 +86,11 @@ class StateData:
             action_sids.append(self.msgh.sid_lookup(actions[c,1]))
             qrow = [r['Q1_ID'].item(), r['Q2_ID'].item()]
             paction_sids.append(self.qsnh.sid_lookup(qrow))
+            pmsg_sids.append(self.msgh.sid_lookup(pactions[c,1]))
             questions.append(qrow)
             rrow = [r['Q1_response'].item(), r['Q2_response'].item()]
             responses.append(rrow)
-        return states, clust, ids, action_sids, msg_ids, \
+        return states, clust, ids, action_sids, msg_ids, pmsg_sids,\
                     paction_sids, pmsg_ids, questions, responses
     
     def analyze(self, data):
