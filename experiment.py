@@ -2,6 +2,9 @@ from utils.behavior_data import BehaviorData
 import torch
 import numpy as np
 import importlib
+from torchviz import make_dot
+import os
+os.environ["PATH"] += os.pathsep + "C:\\Users\\andre\\miniconda3\\envs\\mdiabetes\\Library\\bin\\graphviz"
 
 class Experiment:
     
@@ -59,6 +62,8 @@ class Experiment:
                 output_size=output_size,
                 **model_kw,
             )
+        # yhat = self.model(self.bd.chunkedFeatures[0])
+        # make_dot(yhat, params=dict(list(self.model.named_parameters()))).render("rnn_torchviz", format="png")
         
 
     def runValidation(self):
@@ -283,7 +288,7 @@ class Experiment:
                 labels = torch.cat([labels, label], dim = 0)
                 datas = torch.cat([datas, data], dim = 0)
             
-        loss1 = self.model.train_step(preds, labels, datas, self.trainConsumption, self.trainKnowledge, self.trainPhysical)
+        loss1 = self.model.train_step(preds, labels)
         if (loss1 != None):
             loss.append(loss1)
             loss1.backward()
@@ -354,8 +359,8 @@ class Experiment:
                 # print(len(metrics), len(tmetrics))
                 # print(self.trainKnowledge, self.trainPhysical, self.trainConsumption)
                 # print(lh)
-                # print(self.model.lstm.parameters())
-                print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}")
+                # print(self.model.physicalLayer.weight.data[0, 0:3], self.model.consumptionLayer.weight.data[0, 0:3], self.model.knowledgeLayer.weight.data[0, 0:3])
+                print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}", f"train conAcc: {metrics[labels.index('AccConsumption')]:.3%}", f"test conAcc: {tmetrics[labels.index('AccConsumption')]:.3%}", f"train knowAcc: {metrics[labels.index('AccKnowledge')]:.3%}", f"test knowAcc: {tmetrics[labels.index('AccKnowledge')]:.3%}")
             for sched in scheds:
                 sched.step()
         
@@ -435,19 +440,21 @@ class Experiment:
                 labels = torch.cat([labels, label], dim = 0)
                 datas = torch.cat([datas, data], dim = 0)
             
-        loss1 = self.model.train_step(preds, labels, datas, self.trainConsumption, self.trainKnowledge, self.trainPhysical)
+        loss1 = self.model.train_step(preds, labels)
         if (loss1 != None):
             loss.append(loss1)
             loss1.backward()
             if (not self.trainConsumption) or (not self.trainKnowledge) or (not self.trainPhysical): 
                 # print("????")     
-                if hasattr(self.model, 'lstm'):
+                if hasattr(self, 'consumptionModel'):
+                    self.consumptionModel.maybe_zero_weights(self.trainConsumption, self.trainKnowledge, self.trainPhysical, do="consumption")
+                    self.physicalModel.maybe_zero_weights(self.trainConsumption, self.trainKnowledge, self.trainPhysical, do="physical")
+                    self.knowledgeModel.maybe_zero_weights(self.trainConsumption, self.trainKnowledge, self.trainPhysical, do="knowledge")
+                else:
+                    self.model.maybe_zero_weights(self.trainConsumption, self.trainKnowledge, self.trainPhysical, do="All")
                     # for param in self.model.named_parameters():
                     #     print(param)
-                    self.model.lstm.weight_ih_l0.grad = None
-                    self.model.lstm.bias_ih_l0.grad = None
-                    self.model.lstm.weight_hh_l0.grad = None
-                    self.model.lstm.bias_hh_l0.grad = None
+                    
             for opt in opts:
                 opt.step()
             loss = [l1.item() for l1 in loss]

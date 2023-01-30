@@ -31,3 +31,24 @@ class BasicNN(Base):
         else:
             out_q2 = self.fc_q2(out).softmax(-1)
             return torch.cat([out_q1, out_q2],-1)
+
+    def maybe_zero_weights(self, trainConsumption=True, trainKnowledge=True, trainPhys=True, do="All"):
+        if not self.splitModel or (trainConsumption and trainKnowledge and trainPhys):
+            return
+        self.inputLayer.weight.grad = None
+        self.inputLayer.weight.grad = None
+        if (not trainConsumption and (do == "All" or do == "consumption")):
+            self.fc_q1.weight.grad = None
+            self.fc_q2.weight.grad = None
+            self.fc_q1.bias.grad = None
+            self.fc_q2.bias.grad = None
+        if (not trainKnowledge and (do == "All" or do == "knowledge")):
+            self.fc_q1.weight.grad = None
+            self.fc_q2.weight.grad = None
+            self.fc_q1.bias.grad = None
+            self.fc_q2.bias.grad = None
+        if (not trainPhys and (do == "All" or do == "physical")):
+            self.fc_q1.weight.grad = None
+            self.fc_q2.weight.grad = None
+            self.fc_q1.bias.grad = None
+            self.fc_q2.bias.grad = None

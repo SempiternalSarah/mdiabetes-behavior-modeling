@@ -30,6 +30,23 @@ class AdaptableLSTM(Base):
             self.fc_q1 = nn.Linear(self.hidden_size, outputSize)
             
         self.relu = nn.ReLU()
+
+    def maybe_zero_weights(self, trainConsumption=True, trainKnowledge=True, trainPhys=True, do="All"):
+        if not self.splitModel or (trainConsumption and trainKnowledge and trainPhys):
+            return
+        self.lstm.weight_ih_l0.grad = None
+        self.lstm.bias_ih_l0.grad = None
+        self.lstm.weight_hh_l0.grad = None
+        self.lstm.bias_hh_l0.grad = None
+        if (not trainConsumption):
+            self.consumptionLayer.weight.grad = None
+            self.consumptionLayer.bias.grad = None
+        if (not trainKnowledge):
+            self.knowledgeLayer.weight.grad = None
+            self.knowledgeLayer.bias.grad = None
+        if (not trainPhys):
+            self.physicalLayer.weight.grad = None
+            self.physicalLayer.bias.grad = None
     
     def forward(self, x):
         if (self.splitModel):
