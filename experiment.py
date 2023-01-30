@@ -2,9 +2,6 @@ from utils.behavior_data import BehaviorData
 import torch
 import numpy as np
 import importlib
-from torchviz import make_dot
-import os
-os.environ["PATH"] += os.pathsep + "C:\\Users\\andre\\miniconda3\\envs\\mdiabetes\\Library\\bin\\graphviz"
 
 class Experiment:
     
