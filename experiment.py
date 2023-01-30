@@ -360,6 +360,7 @@ class Experiment:
                 # print(self.trainKnowledge, self.trainPhysical, self.trainConsumption)
                 # print(lh)
                 # print(self.model.physicalLayer.weight.data[0, 0:3], self.model.consumptionLayer.weight.data[0, 0:3], self.model.knowledgeLayer.weight.data[0, 0:3])
+                # print(self.physicalModel.inputLayer.weight.data[0, 0:3], self.consumptionModel.inputLayer.weight.data[0, 0:3], self.knowledgeModel.inputLayer.weight.data[0, 0:3])
                 print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}", f"train conAcc: {metrics[labels.index('AccConsumption')]:.3%}", f"test conAcc: {tmetrics[labels.index('AccConsumption')]:.3%}", f"train knowAcc: {metrics[labels.index('AccKnowledge')]:.3%}", f"test knowAcc: {tmetrics[labels.index('AccKnowledge')]:.3%}")
             for sched in scheds:
                 sched.step()
