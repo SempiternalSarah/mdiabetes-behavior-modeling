@@ -27,7 +27,8 @@ class BehaviorData:
                  response_feature_noise=.05,
                  max_state_week=1,
                  split_model_features=True,
-                 split_weekly_questions=False):
+                 split_weekly_questions=False,
+                 category_specific_history = False):
         # minw, maxw: min and max weeks to collect behavior from
         # include_pid: should the participant id be a feature to the model
         # include_state: should the participant state be a feature
@@ -65,12 +66,14 @@ class BehaviorData:
         self.zeroStateFeatures = False
         # whether to have one question per week
         self.split_weekly_questions = split_weekly_questions
+        # whether to consider only questions in the same category for history features
+        self.category_specific_history = category_specific_history
 
         # adds extra features denoting the category of each question
         # (consumption, exercise, knowledge)
         self.split_model_features = split_model_features
 
-        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.num_weeks_history}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}{self.split_weekly_questions}.pickle"
+        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.num_weeks_history}{self.category_specific_history}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}{self.split_weekly_questions}.pickle"
 
         
 
@@ -347,26 +350,68 @@ class BehaviorData:
 
         # select top responders based on parameter passed in constructor
         d = self.filter_top_responders(d)
+        # insert feature for question categories
+        if self.split_model_features:
+            with open("detailed_question_state_element_map.json", 'r') as fp:
+                qmap = json.loads(fp.read())
+            qCatDict = {}
+            for key in qmap.keys():
+                for elem in qmap[key]:
+                    if int(key) < 9:
+                        qCatDict[elem] = 0
+                    elif int(key) < 13:
+                        qCatDict[elem] = 1
+                    else:
+                        qCatDict[elem] = 2
+            def get_category_num(row):
+                toReturn = []
+                for entry in row["qids"]:
+                    toReturn.append(qCatDict[entry])
+                return tuple(toReturn)
+
+            d["qcats"] = d.apply(get_category_num, axis=1)
+        
+
+
         # check if we need to build up the full sequence
         # method to insert a week's element into all other rows
         # TODO: FIGURE OUT HOW TO WRITE THIS MORE EFFICIENTLY
         def construct_week_elem(row, weekOffset, elem):
             weekno = row['week'] - weekOffset
-            if ((weekno > 0) or (elem != "response" and weekno == 0)):
-                # use full knowledge of the past
-                temp = d[d["pid"] == row['pid']]
-                temp = temp[temp["week"] == weekno]
-                # set non response to -1 to distinguish from undefined (before the study) response
-                if (elem == "response" and 0 in temp.iloc[0][elem]):
+            if weekno >= 0 and ((weekOffset > 0) or (elem != "response" and weekOffset == 0)):
+                if (self.category_specific_history):
+                    temp = d[d["pid"] == row['pid']]
+                    temp = temp[temp["week"] <= weekno]
+
                     vals = []
-                    for val in temp.iloc[0][elem]:
-                        if (val == 0):
-                            vals.append(-1)
+                    for idx, qcat in enumerate(row['qcats']):
+                        temp = temp[temp["qcats"].str[0] == qcat]
+                        entryNo = len(temp.index) - weekOffset - 1
+                        # if we have enough history for this category
+                        if (entryNo >= 0):
+                            entry = temp.iloc[entryNo][elem][idx]
+                            if (elem == "response" and entry == 0):
+                                vals.append(-1)
+                            else:
+                                vals.append(entry)
                         else:
-                            vals.append(val)
+                            vals.append(0)
                     return tuple(vals)
                 else:
-                    return tuple(temp.iloc[0][elem])
+                    # use full knowledge of the past
+                    temp = d[d["pid"] == row['pid']]
+                    temp = temp[temp["week"] == weekno]
+                    # set non response to -1 to distinguish from undefined (before the study) response
+                    if (elem == "response" and 0 in temp.iloc[0][elem]):
+                        vals = []
+                        for val in temp.iloc[0][elem]:
+                            if (val == 0):
+                                vals.append(-1)
+                            else:
+                                vals.append(val)
+                        return tuple(vals)
+                    else:
+                        return tuple(temp.iloc[0][elem])
             else:
                 # don't use knowledge of the future
                 return (0, 0)
@@ -480,22 +525,11 @@ class BehaviorData:
                 bin_feat = _padded_binary(feats_to_enc[j][k],ls[j])
                 X = np.append(X, bin_feat)
                 featureList += [f"{elems[j]}_q{k+1}"] * len(bin_feat)
-        
+
+
         if self.split_model_features:
-            with open("detailed_question_state_element_map.json", 'r') as fp:
-                qmap = json.loads(fp.read())
-            qCatDict = {}
-            for key in qmap.keys():
-                for elem in qmap[key]:
-                    if int(key) < 9:
-                        qCatDict[elem] = 0
-                    elif int(key) < 13:
-                        qCatDict[elem] = 1
-                    else:
-                        qCatDict[elem] = 2
-            for idx, qid in enumerate(row["qids"]):
-                bin_feat = _padded_binary(qCatDict[qid], 3)
-                X = np.append(X, bin_feat)
+            for idx, qid in row["qcats"]:
+                bin_feat = _padded_binary(qid, 3)
                 featureList += [f"q{idx+1}_cat"] * len(bin_feat)
             
         # responses are the labels
