@@ -529,6 +529,7 @@ class BehaviorData:
         if self.split_model_features:
             for idx, qid in enumerate(row["qcats"]):
                 bin_feat = _padded_binary(qid, 3)
+                X = np.append(X, bin_feat)
                 featureList += [f"q{idx+1}_cat"] * len(bin_feat)
             
         # responses are the labels
