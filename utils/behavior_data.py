@@ -370,7 +370,6 @@ class BehaviorData:
                 return tuple(toReturn)
 
             d["qcats"] = d.apply(get_category_num, axis=1)
-        
 
 
         # check if we need to build up the full sequence
@@ -528,7 +527,7 @@ class BehaviorData:
 
 
         if self.split_model_features:
-            for idx, qid in row["qcats"]:
+            for idx, qid in enumerate(row["qcats"]):
                 bin_feat = _padded_binary(qid, 3)
                 featureList += [f"q{idx+1}_cat"] * len(bin_feat)
             
