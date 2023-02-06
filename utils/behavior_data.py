@@ -73,7 +73,7 @@ class BehaviorData:
         # (consumption, exercise, knowledge)
         self.split_model_features = split_model_features
 
-        self.fname = f"{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.num_weeks_history}{self.category_specific_history}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}{self.split_weekly_questions}.pickle"
+        self.fname = f"./saved_data/{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.num_weeks_history}{self.category_specific_history}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}{self.split_weekly_questions}.pickle"
 
         
 
@@ -374,27 +374,27 @@ class BehaviorData:
 
         # check if we need to build up the full sequence
         # method to insert a week's element into all other rows
-        # TODO: FIGURE OUT HOW TO WRITE THIS MORE EFFICIENTLY
         def construct_week_elem(row, weekOffset, elem):
             weekno = row['week'] - weekOffset
             if weekno >= 0 and ((weekOffset > 0) or (elem != "response" and weekOffset == 0)):
                 if (self.category_specific_history):
                     temp = d[d["pid"] == row['pid']]
-                    temp = temp[temp["week"] <= weekno]
+                    temp = temp[temp["week"] <= row["week"]]
 
                     vals = []
                     for idx, qcat in enumerate(row['qcats']):
-                        temp = temp[temp["qcats"].str[0] == qcat]
-                        entryNo = len(temp.index) - weekOffset - 1
+                        temp2 = temp[temp["qcats"].str[0] == qcat]
+                        entryNo = len(temp2.index) - weekOffset - 1
                         # if we have enough history for this category
                         if (entryNo >= 0):
-                            entry = temp.iloc[entryNo][elem][idx]
+                            entry = temp2.iloc[entryNo][elem][idx]
                             if (elem == "response" and entry == 0):
                                 vals.append(-1)
                             else:
                                 vals.append(entry)
+                        # otherwise, use recent of any category
                         else:
-                            vals.append(0)
+                            vals.append(temp.iloc[len(temp.index) - weekOffset - 1][elem][idx])
                     return tuple(vals)
                 else:
                     # use full knowledge of the past
@@ -417,7 +417,7 @@ class BehaviorData:
         # go through and insert msg/question/response for all weeks as appropriate
         for elem in ["pmsg_sids", "paction_sids", "pmsg_ids", "qids", "response"]:
             print(elem)
-            for week in range(self.num_weeks_history):
+            for week in range(self.num_weeks_history + 1):
                 d[f"{elem}_last_{week}"] = d.apply(lambda row: construct_week_elem(row, week, elem), axis=1, result_type='reduce')
 
         # record splits between different participants for later

@@ -12,3 +12,4 @@ data/
 *.pickle
 *.zip
 **/TEMP
+saved_data/**
