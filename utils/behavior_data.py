@@ -28,7 +28,11 @@ class BehaviorData:
                  max_state_week=1,
                  split_model_features=True,
                  split_weekly_questions=False,
-                 category_specific_history = False):
+                 category_specific_history = False,
+                 no_response_class = False,
+                 regression = False,
+                 split_column = None,
+                 split_values = []):
         # minw, maxw: min and max weeks to collect behavior from
         # include_pid: should the participant id be a feature to the model
         # include_state: should the participant state be a feature
@@ -72,8 +76,10 @@ class BehaviorData:
         # adds extra features denoting the category of each question
         # (consumption, exercise, knowledge)
         self.split_model_features = split_model_features
+        self.no_response_class = no_response_class
+        self.regression = regression
 
-        self.fname = f"./saved_data/{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.num_weeks_history}{self.category_specific_history}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}{self.split_weekly_questions}.pickle"
+        self.fname = f"./saved_data/{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.num_weeks_history}{self.category_specific_history}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}{self.split_weekly_questions}{self.no_response_class}{self.regression}.pickle"
 
         
 
@@ -182,11 +188,10 @@ class BehaviorData:
             k = self.dimensions[1] // 2
         # set up our feature modifications
         mods = np.zeros_like(self.chunkedFeatures[indx].numpy())
-
         # iterate through each week (row of this participants data)
         for i, weekRow in enumerate(self.chunkedFeatures[indx]):
             # iterate through the responses of weeks before this one
-            for j in range(1, self.num_weeks_history - 1):
+            for j in range(self.num_weeks_history - 1):
                 # weeks before start should be 0
                 if (i - j) < 0:
                     break
@@ -208,7 +213,6 @@ class BehaviorData:
                                 # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
                             else:
                                 mods[i][idx + offset] = 2 + np.argmax(preds[j][k:])
-
         self.responseMods[indx] = mods
                     
 
@@ -298,10 +302,24 @@ class BehaviorData:
 
         return df
 
-    def get_weekly_response_rates(self):
+    def get_weekly_response_rates(self, raw=True, anyr=True):
         # sum response count for each week
-        counts = self.data.groupby("week")['response_count'].sum()
-        totals = 2 * self.data.groupby("week")['response_count'].count()
+        if (raw):
+            elem = "weekraw"
+        else:
+            elem = "week"
+        if (anyr):
+            def aResponse(row):
+                if np.count_nonzero(row["response"]) > 0:
+                    return 1
+                else:
+                    return 0
+            self.data["nzero_response"] = self.data.apply(aResponse, axis=1)
+            counts = self.data.groupby(elem)['nzero_response'].sum()
+            totals = self.data.groupby(elem)['nzero_response'].count()
+        else:
+            counts = self.data.groupby(elem)['response_count'].sum()
+            totals = 2 * self.data.groupby(elem)['response_count'].count()
         return (counts/totals).values
 
 
@@ -316,6 +334,7 @@ class BehaviorData:
         # unsure where they come from but they aren't listed in the all_ai_participants.csv
         d = d[d["pid"].isin(list(dict.keys(init_states)))]
 
+        d["weekraw"] = d["week"]
         # adjust week values per participant (their first week should be 0, last 23)
         def adjustWeek(row):
             w = row["week"] - start_weeks[row["pid"]]
@@ -539,10 +558,16 @@ class BehaviorData:
             Y2 = np.array([])
             # fill both labels
             for i,r in enumerate(row["response"]):
-                if (i == 0):
-                    Y1 = np.append(Y1, _onehot(r,4))
+                if (self.regression):
+                    if (i == 0):
+                        Y1 = np.append(Y1, r)
+                    else:
+                        Y2 = np.append(Y2, r)
                 else:
-                    Y2 = np.append(Y2, _onehot(r,4))
+                    if (i == 0):
+                        Y1 = np.append(Y1, _onehot(r,4))
+                    else:
+                        Y2 = np.append(Y2, _onehot(r,4))
             # now split rows
             X1 = np.array([])
             X2 = np.array([])
@@ -564,7 +589,10 @@ class BehaviorData:
             X2 = None
             Y2 = None
             for i,r in enumerate(row["response"]):
-                Y1 = np.append(Y1, _onehot(r,4))
+                if self.regression:
+                    Y1 = np.append(Y1, r)
+                else:
+                    Y1 = np.append(Y1, _onehot(r,4))
         
         return X1, X2, Y1, Y2, featureList
     
@@ -583,8 +611,15 @@ class BehaviorData:
     @property
     def dimensions(self):
         # helper to get the x and y input dimensions
-        if (self.split_weekly_questions):
-            return self.features.shape[1], self.labels.shape[1] - 1
+        if (self.regression):
+            lshape = self.labels.shape[1]
+        elif (not self.no_response_class):
+            if (self.split_weekly_questions):
+                lshape = self.labels.shape[1] - 2
+            else:
+                lshape = self.labels.shape[1] - 1
         else:
-            return self.features.shape[1], self.labels.shape[1] - 2
+            lshape = self.labels.shape[1]
+
+        return self.features.shape[1], lshape
         

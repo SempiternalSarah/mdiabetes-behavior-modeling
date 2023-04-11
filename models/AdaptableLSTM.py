@@ -63,14 +63,25 @@ class AdaptableLSTM(Base):
         # [SEQ, hidden_size]
         
         out = self.relu(output)
-        out_q1 = self.fc_q1(out).softmax(-1)
-        # [SEQ, output_size//2]
-        if (self.splitWeeklyQuestions):
-            return out_q1
-        else:
-            out_q2 = self.fc_q2(out).softmax(-1)
+        if (self.regression):
+            out_q1 = self.fc_q1(out).clamp(0, 3)
             # [SEQ, output_size//2]
-            return torch.cat([out_q1, out_q2],-1)
+            if (self.splitWeeklyQuestions):
+                return out_q1
+            else:
+                out_q2 = self.fc_q2(out).clamp(0, 3)
+                # [SEQ, output_size//2]
+                return torch.cat([out_q1, out_q2],-1)
+
+        else:
+            out_q1 = self.fc_q1(out).softmax(-1)
+            # [SEQ, output_size//2]
+            if (self.splitWeeklyQuestions):
+                return out_q1
+            else:
+                out_q2 = self.fc_q2(out).softmax(-1)
+                # [SEQ, output_size//2]
+                return torch.cat([out_q1, out_q2],-1)
 
     def forward_split(self, x):
         # One forward pass of input vector/batch x
@@ -131,7 +142,10 @@ class AdaptableLSTM(Base):
                 # print("p1", physRows1, datas)
                 ppred1 = self.physicalLayer(datas[physRows1])
                 pred = pred.index_add(0, physRows1, ppred1)
-            pred = pred.softmax(-1)
+            if (self.regression):
+                pred = pred.clamp(0, 3)
+            else:
+                pred = pred.softmax(-1)
             # reshape to match single model output
             # final shape is 2 questions per row (1 row = 1 week for this participant)
             pred = torch.cat((pred[0:datas.shape[0]], pred[datas.shape[0]:]), dim = 1)
@@ -160,7 +174,10 @@ class AdaptableLSTM(Base):
                 physRows = physRows.squeeze(dim=-1)
                 ppred = self.physicalLayer(datas[physRows])
                 pred = pred.index_add(0, physRows, ppred)
-            pred = pred.softmax(-1)
+            if (self.regression):
+                pred = pred.clamp(0, 3)
+            else:
+                pred = pred.softmax(-1)
         return pred
     
     def w1_reg(self, y):

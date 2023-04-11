@@ -25,12 +25,20 @@ class BasicNN(Base):
     def forward(self, x):
         output = self.inputLayer(x) 
         out = self.relu(output)
-        out_q1 = self.fc_q1(out).softmax(-1)
-        if (self.splitModel or self.splitWeeklyQuestions):
-            return out_q1
+        if (self.regression):
+            out_q1 = self.fc_q1(out).clamp(0, 3)
+            if (self.splitModel or self.splitWeeklyQuestions):
+                return out_q1
+            else:
+                out_q2 = self.fc_q2(out).clamp(0, 3)
+                return torch.cat([out_q1, out_q2],-1)
         else:
-            out_q2 = self.fc_q2(out).softmax(-1)
-            return torch.cat([out_q1, out_q2],-1)
+            out_q1 = self.fc_q1(out).softmax(-1)
+            if (self.splitModel or self.splitWeeklyQuestions):
+                return out_q1
+            else:
+                out_q2 = self.fc_q2(out).softmax(-1)
+                return torch.cat([out_q1, out_q2],-1)
 
     def maybe_zero_weights(self, trainConsumption=True, trainKnowledge=True, trainPhys=True, do="All"):
         if not self.splitModel or (trainConsumption and trainKnowledge and trainPhys):
