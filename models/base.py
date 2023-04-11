@@ -20,7 +20,9 @@ class Base(nn.Module):
                  labelSmoothPerc = 0.0, gaussianNoiseStd = 0.0,
                  numTimesteps = 24,
                  splitModel = False,
-                 splitWeeklyQuestions = False):
+                 splitWeeklyQuestions = False,
+                 no_response_class = False,
+                 regression = False):
         # define all inputs to the model
         # input_size:   # features in input
         # hidden_size:  # size of hidden layer
@@ -30,6 +32,7 @@ class Base(nn.Module):
         # optimizer:    # string represneting torch optimizer
         # opt_kw:       # keyword arguments to optimizer
         super().__init__()
+        self.no_response_class = no_response_class
         self.lr_step_mult = lr_step_mult
         self.lr_step_epochs = lr_step_epochs
         self.input_size = input_size
@@ -42,6 +45,7 @@ class Base(nn.Module):
         self.numTimesteps = numTimesteps
         self.splitModel = splitModel
         self.splitWeeklyQuestions = splitWeeklyQuestions
+        self.regression = regression
         
         
     def forward(self, x):
@@ -89,31 +93,47 @@ class Base(nn.Module):
         if not self.splitWeeklyQuestions:
             pred = pred.view((y.shape[0], k*2))
             # reshape preds/labels so that one question = one row
-            pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
-            y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
-        # calculate loss, ignoring nonresponses
-        pred = pred[y[:, 0] != 1]
-        y = y[y[:, 0] != 1]
-        y = y[:, 1:]
+            if (self.no_response_class or self.regression):
+                pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
+                y = torch.cat([y[:, :k], y[:, k:]], 0)
+            else:
+                pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
+                y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
+        
+        # filter out non responses if desired
+        if (not self.no_response_class):
+            if (self.regression):
+                pred = pred[y != 0] - 1
+                y = y[y != 0] - 1
+            else:
+                pred = pred[y[:, 0] != 1]
+                y = y[y[:, 0] != 1]
+                y = y[:, 1:]
 
         if (pred.numel() <= 0):
             return None
-
         # smooth labels for hopefully better overall results
-        l = self.labelSmoothPerc
-        if (l > 0):
-            y[y[:, 0] == 1] += torch.tensor([[-l, l, 0]])
-            y[y[:, 1] == 1] += torch.tensor([[2*l/3, -4*l/3, 2*l/3]])
-            y[y[:, 2] == 1] += torch.tensor([[0, l, -l]])
-        g = self.gaussianNoiseStd
-        if (g > 0):
-            y += torch.normal(mean=torch.zeros_like(y), std=g * torch.ones_like(y))
-            # re-normalize labels to ensure no < 0 and that sum = 1
-            y[y < 0] = 0
-            # divide each row by sum of that row
-            y /= y.sum(dim=1).unsqueeze(-1).expand(y.size())
-
+        if (not self.regression):
+            l = self.labelSmoothPerc
+            if (l > 0):
+                if (not self.no_response_class):
+                    y[y[:, 0] == 1] += torch.tensor([[-l, l, 0]])
+                    y[y[:, 1] == 1] += torch.tensor([[2*l/3, -4*l/3, 2*l/3]])
+                    y[y[:, 2] == 1] += torch.tensor([[0, l, -l]])
+                else:
+                    y[y[:, 1] == 1] += torch.tensor([[0, -l, l, 0]])
+                    y[y[:, 2] == 1] += torch.tensor([[0, 2*l/3, -4*l/3, 2*l/3]])
+                    y[y[:, 3] == 1] += torch.tensor([[0, 0, l, -l]])
+            g = self.gaussianNoiseStd
+            if (g > 0):
+                y += torch.normal(mean=torch.zeros_like(y), std=g * torch.ones_like(y))
+                # re-normalize labels to ensure no < 0 and that sum = 1
+                y[y < 0] = 0
+                # divide each row by sum of that row
+                y /= y.sum(dim=1).unsqueeze(-1).expand(y.size())
+        
         loss = crit(pred, y)
+        
         return loss
             
 
@@ -131,33 +151,73 @@ class Base(nn.Module):
         # reshape so 1 response = 1 row if needed
         if not self.splitWeeklyQuestions:
             pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
-            y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
+            if (self.no_response_class or self.regression):
+                y = torch.cat([y[:, :k], y[:, k:]], 0)
+            else:
+                y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
             data = torch.cat([data[:, 0:2], data[:, 2:]], 0)
-        # calculate loss, ignoring nonresponses
-        pred = pred[y[:, 0] != 1]
-        data = data[y[:, 0] != 1]
-        y = y[y[:, 0] != 1]
+        if (not self.no_response_class):
+            if (self.regression):
+                pred = pred[y != 0] - 1
+                data = data[y != 0]
+                y = y[y != 0] - 1
+            else:
+                pred = pred[y[:, 0] != 1]
+                data = data[y[:, 0] != 1]
+                y = y[y[:, 0] != 1]
+                y = y[:, 1:]
         if (y.numel() > 0):
             crit = torch.nn.MSELoss()
-            mseloss = crit(pred, y[:, 1:])
-            crit = torch.nn.CrossEntropyLoss()
-            celoss = crit(pred, y[:, 1:])
-            crit = NDCG
-            ndcg = crit(pred, y[:, 1:])
-            crit = MRR
-            mrr = crit(pred, y[:, 1:])
-            sm = torch.nn.Softmax(dim=1)
-            predValues = torch.nn.functional.one_hot(torch.argmax(pred, dim=1), num_classes=k)
-            class_precision, class_recall = torchmetrics.functional.precision_recall(pred.argmax(dim=1), y[:, 1:].argmax(dim=1), average='none', num_classes=k)
-            accuracy = (predValues * y[:, 1:]).sum() / y.shape[0]
+            mseloss = crit(pred, y)
+            if (not self.regression):
+                crit = torch.nn.CrossEntropyLoss()
+                celoss = crit(pred, y)
+                crit = NDCG
+                ndcg = crit(pred, y)
+                crit = MRR
+                mrr = crit(pred, y)
+                rankingVals = [celoss, ndcg, mrr]
+                rankingLabels = ["CE", "NDCG", "MRR"]
+                predValues = torch.nn.functional.one_hot(torch.argmax(pred, dim=1), num_classes=k)
+                labelValues = y
+                class_precision, class_recall = torchmetrics.functional.precision_recall(pred.argmax(dim=1), y.argmax(dim=1), average='none', num_classes=k)
+            else:
+                rankingVals = []
+                rankingLabels = []
+                if (self.no_response_class):
+                    num_classes = 4
+                else:
+                    num_classes = 3
+                predValues = torch.nn.functional.one_hot(pred.round().long(), num_classes=num_classes).squeeze()
+                labelValues = torch.nn.functional.one_hot(y.long(), num_classes=num_classes).squeeze()
+                # print(predValues.sum(dim=0), labelValues.sum(dim=0))
+                class_precision, class_recall = torchmetrics.functional.precision_recall(pred.round().long(), y.long(), average='none', num_classes=num_classes)
+                
+
+            accuracy = (predValues * labelValues).sum() / labelValues.shape[0]
             # filter predicted classes by true class
-            pred1 = predValues[y[:, 1] == 1]
-            pred2 = predValues[y[:, 2] == 1]
-            pred3 = predValues[y[:, 3] == 1]
-            # per class accuracy
-            acc1 = (pred1[:, 0].sum()) / pred1.shape[0]
-            acc2 = (pred2[:, 1].sum()) / pred2.shape[0]
-            acc3 = (pred3[:, 2].sum()) / pred3.shape[0]
+            if self.no_response_class:
+                accLabels = ["Acc0", "Acc1", "Acc2", "Acc3"]
+                pred0 = predValues[labelValues[:, 0] == 1]
+                pred1 = predValues[labelValues[:, 1] == 1]
+                pred2 = predValues[labelValues[:, 2] == 1]
+                pred3 = predValues[labelValues[:, 3] == 1]
+                # per class accuracy
+                acc0 = (pred0[:, 0].sum()) / pred0.shape[0]
+                acc1 = (pred1[:, 0].sum()) / pred1.shape[0]
+                acc2 = (pred2[:, 1].sum()) / pred2.shape[0]
+                acc3 = (pred3[:, 2].sum()) / pred3.shape[0]
+                accValues = [acc0, acc1, acc2, acc3]
+            else:
+                accLabels = ["Acc1", "Acc2", "Acc3"]
+                pred1 = predValues[labelValues[:, 0] == 1]
+                pred2 = predValues[labelValues[:, 1] == 1]
+                pred3 = predValues[labelValues[:, 2] == 1]
+                # per class accuracy
+                acc1 = (pred1[:, 0].sum()) / pred1.shape[0]
+                acc2 = (pred2[:, 1].sum()) / pred2.shape[0]
+                acc3 = (pred3[:, 2].sum()) / pred3.shape[0]
+                accValues = [acc1, acc2, acc3]
 
             # record per category accuracy
             if (self.splitModel):
@@ -165,9 +225,9 @@ class Base(nn.Module):
                 consumptionRows = (torch.where(data[:, -1] == 0, 1, 0) * torch.where(data[:, -2] == 0, 1, 0)).nonzero()
                 knowledgeRows = (torch.where(data[:, -1] == 0, 1, 0) * torch.where(data[:, -2] == 1, 1, 0)).nonzero()
                 physRows = (torch.where(data[:, -1] == 1, 1, 0) * torch.where(data[:, -2] == 0, 1, 0)).nonzero()
-                conRows, conYs = predValues[consumptionRows], y[consumptionRows, 1:]
-                exerRows, exerYs = predValues[physRows], y[physRows, 1:]
-                knowRows, knowYs = predValues[knowledgeRows], y[knowledgeRows, 1:]
+                conRows, conYs = predValues[consumptionRows], labelValues[consumptionRows]
+                exerRows, exerYs = predValues[physRows], labelValues[physRows]
+                knowRows, knowYs = predValues[knowledgeRows], labelValues[knowledgeRows]
                 consumptionAcc = (conRows * conYs).sum() / conRows.shape[0]
                 exerciseAcc = (exerRows * exerYs).sum() / exerRows.shape[0]
                 knowledgeAcc = (knowRows * knowYs).sum() / knowRows.shape[0]
@@ -181,9 +241,9 @@ class Base(nn.Module):
             timeLabels = []
             for x in range(self.numTimesteps):
                 indices = np.arange(x, predValues.shape[0], self.numTimesteps)
-                timeAcc.append((predValues[indices] * y[indices, 1:]).sum() / len(indices))
+                timeAcc.append((predValues[indices] * labelValues[indices]).sum() / len(indices))
                 timeLabels.append(f"Week{x}Acc")
-            return np.array([mseloss.item(), celoss.item(), ndcg.item(), mrr.item(), accuracy.item()] + classStats + [acc1, acc2, acc3, class_precision[0].item(), class_precision[1].item(), class_precision[2].item(), class_recall[0].item(), class_recall[1].item(), class_recall[2].item(), pred1.shape[0], pred2.shape[0], pred3.shape[0]] + timeAcc), ["MSE", "CE", "NDCG", "MRR", "Acc"] + classLabels + ["Acc1", "Acc2", "Acc3", "Prec1", "Prec2", "Prec3", "Rec1", "Rec2", "Rec3", "Count1", "Count2", "Count3"] + timeLabels
+            return np.array([mseloss.item()] + rankingVals + [accuracy.item()] + classStats + accValues + [class_precision[0].item(), class_precision[1].item(), class_precision[2].item(), class_recall[0].item(), class_recall[1].item(), class_recall[2].item(), pred1.shape[0], pred2.shape[0], pred3.shape[0]] + timeAcc), ["MSE"] + rankingLabels + ["Acc"] + classLabels + accLabels + ["Prec1", "Prec2", "Prec3", "Rec1", "Rec2", "Rec3", "Count1", "Count2", "Count3"] + timeLabels
         else:
             return [], ["MSE", "CE", "NDCG", "MRR", "Acc", "ResCount"]
                      

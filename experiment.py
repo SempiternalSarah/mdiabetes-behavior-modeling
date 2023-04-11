@@ -368,6 +368,10 @@ class Experiment:
                 # tmetrics, tlabels = self.report_scores()
                 # test_metrics.append(tmetrics)
                 # print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}", f"train conAcc: {metrics[labels.index('AccConsumption')]:.3%}", f"test conAcc: {tmetrics[labels.index('AccConsumption')]:.3%}", f"train knowAcc: {metrics[labels.index('AccKnowledge')]:.3%}", f"test knowAcc: {tmetrics[labels.index('AccKnowledge')]:.3%}")
+                if (self.modelSplit):
+                    print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}", f"train conAcc: {metrics[labels.index('AccConsumption')]:.3%}", f"test conAcc: {tmetrics[labels.index('AccConsumption')]:.3%}", f"train knowAcc: {metrics[labels.index('AccKnowledge')]:.3%}", f"test knowAcc: {tmetrics[labels.index('AccKnowledge')]:.3%}")
+                else:
+                    print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}")
             for sched in scheds:
                 sched.step()
         
@@ -459,8 +463,7 @@ class Experiment:
                     self.knowledgeModel.maybe_zero_weights(self.trainConsumption, self.trainKnowledge, self.trainPhysical, do="knowledge")
                 else:
                     self.model.maybe_zero_weights(self.trainConsumption, self.trainKnowledge, self.trainPhysical, do="All")
-                    # for param in self.model.named_parameters():
-                    #     print(param)
+            # print(self.model.inputLayer.weight.grad.abs().max())
                     
             for opt in opts:
                 opt.step()

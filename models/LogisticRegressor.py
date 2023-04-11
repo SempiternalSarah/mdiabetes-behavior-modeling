@@ -20,9 +20,15 @@ class LogisticRegressor(Base):
         preds = self.linear(x)
         # softmax per question, recombine
         if (self.splitModel or self.splitWeeklyQuestions):
-            return self.softmax(preds)
+            if (self.regression):
+                return preds.clamp(0, 3)
+            else:
+                return self.softmax(preds)
         else:
-            return torch.cat([self.softmax(preds[:, 0:(self.output_size//2)]), self.softmax(preds[:, (self.output_size//2):])], -1)
+            if (self.regression):
+                return preds.clamp(0, 3)
+            else:
+                return torch.cat([self.softmax(preds[:, 0:(self.output_size//2)]), self.softmax(preds[:, (self.output_size//2):])], -1)
 
     def maybe_zero_weights(self, trainConsumption=True, trainKnowledge=True, trainPhys=True, do="All"):
         if not self.splitModel or (trainConsumption and trainKnowledge and trainPhys):
