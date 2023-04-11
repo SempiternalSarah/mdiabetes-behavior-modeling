@@ -335,19 +335,11 @@ class Experiment:
             if e in self.physSchedule:
                 self.trainPhysical = not self.trainPhysical
 
-            lh = self.train_epoch(opts)
-
-            # update our predictions as features when appropriate
-            if (self.bd.insert_predictions):
-                if (e > 0 and e % self.epochsToUpdateLabelMods == 0) or e == epochs - 1:
-                    self.update_all_feature_mods()
-
             # record metrics every rec_every epochs
-            if (e%rec_every) == 0 or e == epochs - 1:
+            if (e%rec_every) == 0  or (e == epochs - 1):
                 # for model in [self.consumptionModel, self.knowledgeModel, self.physicalModel]:
                 # for param in self.physicalModel.parameters():
                 #     print(param)
-                stored_losses.append(lh)
                 metrics, labels = self.report_scores_train()
                 train_metrics.append(metrics)
                 tmetrics, tlabels = self.report_scores()
@@ -359,7 +351,23 @@ class Experiment:
                 # print(self.model.physicalLayer.weight.data[0, 0:3], self.model.consumptionLayer.weight.data[0, 0:3], self.model.knowledgeLayer.weight.data[0, 0:3])
                 # print(self.model.lstm.weight_ih_l0.data[0, 0:3])
                 # print(self.physicalModel.inputLayer.weight.data[0, 0:3], self.consumptionModel.inputLayer.weight.data[0, 0:3], self.knowledgeModel.inputLayer.weight.data[0, 0:3])
-                print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}", f"train conAcc: {metrics[labels.index('AccConsumption')]:.3%}", f"test conAcc: {tmetrics[labels.index('AccConsumption')]:.3%}", f"train knowAcc: {metrics[labels.index('AccKnowledge')]:.3%}", f"test knowAcc: {tmetrics[labels.index('AccKnowledge')]:.3%}")
+                # print(f'{e}\t', f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}", f"train conAcc: {metrics[labels.index('AccConsumption')]:.3%}", f"test conAcc: {tmetrics[labels.index('AccConsumption')]:.3%}", f"train knowAcc: {metrics[labels.index('AccKnowledge')]:.3%}", f"test knowAcc: {tmetrics[labels.index('AccKnowledge')]:.3%}")
+
+            lh = self.train_epoch(opts)
+
+            # update our predictions as features when appropriate
+            if (self.bd.insert_predictions):
+                if (e > 0 and e % self.epochsToUpdateLabelMods == 0) or e == epochs - 1:
+                    self.update_all_feature_mods()
+
+            # record FINAL trained metrics
+            if (e%rec_every) == 0 or (e == epochs - 1):
+                stored_losses.append(lh)
+                # metrics, labels = self.report_scores_train()
+                # train_metrics.append(metrics)
+                # tmetrics, tlabels = self.report_scores()
+                # test_metrics.append(tmetrics)
+                # print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}", f"train conAcc: {metrics[labels.index('AccConsumption')]:.3%}", f"test conAcc: {tmetrics[labels.index('AccConsumption')]:.3%}", f"train knowAcc: {metrics[labels.index('AccKnowledge')]:.3%}", f"test knowAcc: {tmetrics[labels.index('AccKnowledge')]:.3%}")
             for sched in scheds:
                 sched.step()
         

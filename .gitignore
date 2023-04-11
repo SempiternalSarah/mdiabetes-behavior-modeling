@@ -6,6 +6,7 @@ data/
 **/*.png
 **/img
 **/experiment_output
+**/experiment_output_long
 **/validation_experiment_output
 **/imgDet
 **/hidden_size_experiment_output

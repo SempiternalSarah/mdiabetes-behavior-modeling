@@ -182,11 +182,10 @@ class BehaviorData:
             k = self.dimensions[1] // 2
         # set up our feature modifications
         mods = np.zeros_like(self.chunkedFeatures[indx].numpy())
-
         # iterate through each week (row of this participants data)
         for i, weekRow in enumerate(self.chunkedFeatures[indx]):
             # iterate through the responses of weeks before this one
-            for j in range(1, self.num_weeks_history - 1):
+            for j in range(self.num_weeks_history - 1):
                 # weeks before start should be 0
                 if (i - j) < 0:
                     break
@@ -208,7 +207,6 @@ class BehaviorData:
                                 # need to add 2 (feature itself is -1, argmax is 0 if pred class is 1)
                             else:
                                 mods[i][idx + offset] = 2 + np.argmax(preds[j][k:])
-
         self.responseMods[indx] = mods
                     
 

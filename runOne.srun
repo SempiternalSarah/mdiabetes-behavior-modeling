@@ -1,0 +1,15 @@
+#!/bin/bash
+#SBATCH --partition=short
+#SBATCH --job-name=mdiabetesM$1W$2E$3S$4F$5
+#SBATCH --output=/dev/null
+#SBATCH --error=MDIABETES$1.err
+#SBATCH --time=24:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=32000M
+#SBATCH --account=ailab
+module load miniconda
+conda activate mdiabetes
+
+srun python3 /home/abutler9/ailab/mdiabetes-behavior-modeling/talapas-experiment.py -model $1 -numWeeks $2 -estate $3 -includeState $4 -fullQ $5 -insertPreds $6 -splitQ $7 -splitM ${8} -catHist ${9} -knowEpochs ${10} -physEpochs ${11} -conEpochs ${12} -smooth ${13} -noise ${14} -learning_rate ${15}
