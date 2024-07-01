@@ -22,7 +22,11 @@ class Base(nn.Module):
                  splitModel = False,
                  splitWeeklyQuestions = False,
                  no_response_class = False,
-                 regression = False):
+                 regression = False,
+                 hierarchical = None,
+                 separateHierLoss = False,
+                 only_rnr = False,
+                 transformer = False):
         # define all inputs to the model
         # input_size:   # features in input
         # hidden_size:  # size of hidden layer
@@ -32,6 +36,9 @@ class Base(nn.Module):
         # optimizer:    # string represneting torch optimizer
         # opt_kw:       # keyword arguments to optimizer
         super().__init__()
+        self.only_rnr = only_rnr
+        self.separateHierLoss = separateHierLoss
+        self.hierarchical = hierarchical
         self.no_response_class = no_response_class
         self.lr_step_mult = lr_step_mult
         self.lr_step_epochs = lr_step_epochs
@@ -46,6 +53,8 @@ class Base(nn.Module):
         self.splitModel = splitModel
         self.splitWeeklyQuestions = splitWeeklyQuestions
         self.regression = regression
+        self.transformer = transformer
+            
         
         
     def forward(self, x):
@@ -78,10 +87,12 @@ class Base(nn.Module):
         print("Weights not zeroed! Implement function!")
         None
 
-    def train_step(self, pred, y):
+    def train_step(self, pred, y, RvsNR):
         # One optimization step of our model on 
         # predictions pred with labels y
         # make predictions using forward() before calling this function
+        if (self.only_rnr):
+            return nn.CrossEntropyLoss()(pred, y)
         if (self.lossfn == "NDCG"):
             crit = NDCG
         else:
@@ -99,16 +110,26 @@ class Base(nn.Module):
             else:
                 pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
                 y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
+
+        if (self.hierarchical and self.separateHierLoss):
+            if (self.regression):
+                RvsNRClasses = torch.clamp_max(y, 1).squeeze(-1).long()
+            else:
+                RvsNRClasses = torch.where((y[:, 0] == 1), 0, 1)
+            # print(RvsNR.shape, RvsNRClasses.shape)
+            RvsNRLoss = nn.CrossEntropyLoss()(RvsNR, RvsNRClasses)
         
         # filter out non responses if desired
-        if (not self.no_response_class):
+        if ( (self.hierarchical and self.separateHierLoss) or not self.no_response_class):
             if (self.regression):
-                pred = pred[y != 0] - 1
-                y = y[y != 0] - 1
+                pred = pred[y != 0]
+                y = y[y != 0]
             else:
                 pred = pred[y[:, 0] != 1]
                 y = y[y[:, 0] != 1]
                 y = y[:, 1:]
+            if (self.hierarchical):
+                pred = pred[:, 1:]
 
         if (pred.numel() <= 0):
             return None
@@ -116,7 +137,7 @@ class Base(nn.Module):
         if (not self.regression):
             l = self.labelSmoothPerc
             if (l > 0):
-                if (not self.no_response_class):
+                if ((self.hierarchical and self.separateHierLoss) or not self.no_response_class):
                     y[y[:, 0] == 1] += torch.tensor([[-l, l, 0]])
                     y[y[:, 1] == 1] += torch.tensor([[2*l/3, -4*l/3, 2*l/3]])
                     y[y[:, 2] == 1] += torch.tensor([[0, l, -l]])
@@ -131,8 +152,9 @@ class Base(nn.Module):
                 y[y < 0] = 0
                 # divide each row by sum of that row
                 y /= y.sum(dim=1).unsqueeze(-1).expand(y.size())
-        
         loss = crit(pred, y)
+        if (self.hierarchical and self.separateHierLoss):
+            loss = loss + 0.5*RvsNRLoss
         
         return loss
             
@@ -142,7 +164,6 @@ class Base(nn.Module):
             k = self.output_size
         else:
             k = self.output_size // 2
-
         # separate out category labels
         if (self.splitWeeklyQuestions):
             data = data[:, -2:]
@@ -151,16 +172,17 @@ class Base(nn.Module):
         # reshape so 1 response = 1 row if needed
         if not self.splitWeeklyQuestions:
             pred = torch.cat([pred[:, :k], pred[:, k:]], 0)
-            if (self.no_response_class or self.regression):
+            if (self.no_response_class or self.regression or self.only_rnr):
                 y = torch.cat([y[:, :k], y[:, k:]], 0)
             else:
                 y = torch.cat([y[:, :k + 1], y[:, k + 1:]], 0)
             data = torch.cat([data[:, 0:2], data[:, 2:]], 0)
+        # print(data.shape, y.shape, pred.shape)
         if (not self.no_response_class):
             if (self.regression):
-                pred = pred[y != 0] - 1
-                data = data[y != 0]
-                y = y[y != 0] - 1
+                pred = pred[y != 0]
+                data = data[y[:, 0] != 0]
+                y = y[y != 0]
             else:
                 pred = pred[y[:, 0] != 1]
                 data = data[y[:, 0] != 1]
@@ -180,34 +202,51 @@ class Base(nn.Module):
                 rankingLabels = ["CE", "NDCG", "MRR"]
                 predValues = torch.nn.functional.one_hot(torch.argmax(pred, dim=1), num_classes=k)
                 labelValues = y
+                # print(pred.shape, y.shape)
                 class_precision, class_recall = torchmetrics.functional.precision_recall(pred.argmax(dim=1), y.argmax(dim=1), average='none', num_classes=k)
             else:
                 rankingVals = []
                 rankingLabels = []
-                if (self.no_response_class):
+                if (self.only_rnr):
+                    num_classes = 2
+                    pred = pred.clamp(0, 1)
+                elif (self.no_response_class):
                     num_classes = 4
+                    pred = pred.clamp(0, 3)
                 else:
                     num_classes = 3
+                    pred = pred.clamp(0, 2)
+                    y = y - 1
                 predValues = torch.nn.functional.one_hot(pred.round().long(), num_classes=num_classes).squeeze()
                 labelValues = torch.nn.functional.one_hot(y.long(), num_classes=num_classes).squeeze()
                 # print(predValues.sum(dim=0), labelValues.sum(dim=0))
+                # print(pred.shape, y.shape)
                 class_precision, class_recall = torchmetrics.functional.precision_recall(pred.round().long(), y.long(), average='none', num_classes=num_classes)
                 
 
             accuracy = (predValues * labelValues).sum() / labelValues.shape[0]
             # filter predicted classes by true class
-            if self.no_response_class:
-                accLabels = ["Acc0", "Acc1", "Acc2", "Acc3"]
+            if (self.only_rnr):
+                accLabels = ["Acc0", "Acc1"]
                 pred0 = predValues[labelValues[:, 0] == 1]
+                pred1 = predValues[labelValues[:, 1] == 1]
+                acc0 = (pred0[:, 0].sum()) / pred0.shape[0]
+                acc1 = (pred1[:, 1].sum()) / pred1.shape[0]
+                accValues = [acc0, acc1]
+            elif self.no_response_class:
+                accLabels = ["Acc0", "AccRes", "Acc1", "Acc2", "Acc3"]
+                pred0 = predValues[labelValues[:, 0] == 1]
+                predRes = predValues[labelValues[:, 0] != 1]
                 pred1 = predValues[labelValues[:, 1] == 1]
                 pred2 = predValues[labelValues[:, 2] == 1]
                 pred3 = predValues[labelValues[:, 3] == 1]
                 # per class accuracy
                 acc0 = (pred0[:, 0].sum()) / pred0.shape[0]
-                acc1 = (pred1[:, 0].sum()) / pred1.shape[0]
-                acc2 = (pred2[:, 1].sum()) / pred2.shape[0]
-                acc3 = (pred3[:, 2].sum()) / pred3.shape[0]
-                accValues = [acc0, acc1, acc2, acc3]
+                accRes = (predRes * labelValues[labelValues[:, 0] != 1]).sum() / predRes.shape[0]
+                acc1 = (pred1[:, 1].sum()) / pred1.shape[0]
+                acc2 = (pred2[:, 2].sum()) / pred2.shape[0]
+                acc3 = (pred3[:, 3].sum()) / pred3.shape[0]
+                accValues = [acc0, accRes, acc1, acc2, acc3]
             else:
                 accLabels = ["Acc1", "Acc2", "Acc3"]
                 pred1 = predValues[labelValues[:, 0] == 1]
@@ -243,9 +282,11 @@ class Base(nn.Module):
                 indices = np.arange(x, predValues.shape[0], self.numTimesteps)
                 timeAcc.append((predValues[indices] * labelValues[indices]).sum() / len(indices))
                 timeLabels.append(f"Week{x}Acc")
+            if (self.only_rnr):
+                return np.array([mseloss.item()] + rankingVals + [accuracy.item()] + classStats + accValues + timeAcc), ["MSE"] + rankingLabels + ["Acc"] + classLabels + accLabels + timeLabels
             return np.array([mseloss.item()] + rankingVals + [accuracy.item()] + classStats + accValues + [class_precision[0].item(), class_precision[1].item(), class_precision[2].item(), class_recall[0].item(), class_recall[1].item(), class_recall[2].item(), pred1.shape[0], pred2.shape[0], pred3.shape[0]] + timeAcc), ["MSE"] + rankingLabels + ["Acc"] + classLabels + accLabels + ["Prec1", "Prec2", "Prec3", "Rec1", "Rec2", "Rec3", "Count1", "Count2", "Count3"] + timeLabels
         else:
             return [], ["MSE", "CE", "NDCG", "MRR", "Acc", "ResCount"]
-                     
+                    
                      
             

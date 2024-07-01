@@ -142,6 +142,7 @@ class QuestionHandler:
             for k in self.question_map.keys():
                 if q in self.question_map[k]:
                     sids.append(k)
+                    break
         return sids
 
     def random_questions(self, state_elems):

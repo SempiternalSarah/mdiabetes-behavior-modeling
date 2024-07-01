@@ -18,27 +18,62 @@ class BasicNN(Base):
             outputSize = self.output_size
         else:
             outputSize = self.output_size // 2
-        self.fc_q1 = nn.Linear(self.hidden_size, outputSize)
-        self.fc_q2 = nn.Linear(self.hidden_size, outputSize)
-        self.relu = nn.ReLU()
-    
-    def forward(self, x):
-        output = self.inputLayer(x) 
-        out = self.relu(output)
-        if (self.regression):
-            out_q1 = self.fc_q1(out).clamp(0, 3)
-            if (self.splitModel or self.splitWeeklyQuestions):
-                return out_q1
+        if (self.transformer):
+            self.tlayer = nn.TransformerEncoderLayer(d_model=self.hidden_size, nhead=1, dim_feedforward=self.hidden_size, batch_first=True)
+        if (self.hierarchical == "Shared"):
+            if (self.regression):
+                osize = 1
             else:
-                out_q2 = self.fc_q2(out).clamp(0, 3)
-                return torch.cat([out_q1, out_q2],-1)
+                osize = (outputSize * 3) // 4
+            self.fc_q1 = nn.Linear(self.hidden_size, osize)
+            self.fc_q2 = nn.Linear(self.hidden_size, osize)
+            self.fc_q1RNR = nn.Linear(self.hidden_size, 2)
+            self.fc_q2RNR = nn.Linear(self.hidden_size, 2)
         else:
+            self.fc_q1 = nn.Linear(self.hidden_size, outputSize)
+            self.fc_q2 = nn.Linear(self.hidden_size, outputSize)
+        self.relu = nn.ReLU()
+        
+    def forward(self, x):
+        output = self.inputLayer(x)
+        out = self.relu(output)
+        RvsNR = None
+        if (self.regression):
+            if (self.hierarchical == "Shared"):
+                RvsNR = self.fc_q1RNR(out).softmax(-1)
+                classpreds = self.relu(self.fc_q1(out)) + 1
+                if (not self.splitWeeklyQuestions):
+                    RvsNR = torch.cat([RvsNR, self.fc_q2RNR(out).softmax(-1)], 0)
+                    classpreds = torch.cat([classpreds, self.relu(self.fc_q2(out))], 0)
+                # print(classpreds.shape, RvsNR.shape)
+                toReturn = torch.where((RvsNR[:, 0] > RvsNR[:, 1]).unsqueeze(-1), (RvsNR[:, 1]).unsqueeze(-1), classpreds)
+                # print(toReturn.shape)
+                if (not self.splitWeeklyQuestions):
+                    toReturn = torch.cat([toReturn[0:toReturn.shape[0] // 2], toReturn[toReturn.shape[0]:]], -1)
+                return toReturn, RvsNR
+            out_q1 = self.relu(self.fc_q1(out))
+            if (self.splitModel or self.splitWeeklyQuestions):
+                return out_q1, RvsNR
+            else:
+                out_q2 = self.relu(self.fc_q2(out))
+                return torch.cat([out_q1, out_q2],-1), RvsNR
+        else:
+            if (self.hierarchical == "Shared"):
+                RvsNR = self.fc_q1RNR(out).softmax(-1)
+                classpreds = self.fc_q1(out).softmax(-1)
+                if (not self.splitWeeklyQuestions):
+                    RvsNR = torch.cat([RvsNR, self.fc_q2RNR(out).softmax(-1)], 0)
+                    classpreds = torch.cat([classpreds, self.fc_q2(out).softmax(-1)], 0)
+                toReturn = torch.cat([RvsNR[:, 0].unsqueeze(-1), (RvsNR[:, 1]).unsqueeze(-1) * classpreds], -1)
+                if (not self.splitWeeklyQuestions):
+                    toReturn = torch.cat([toReturn[0:toReturn.shape[0] // 2], toReturn[toReturn.shape[0]:]], -1)
+                return toReturn, RvsNR
             out_q1 = self.fc_q1(out).softmax(-1)
             if (self.splitModel or self.splitWeeklyQuestions):
-                return out_q1
+                return out_q1, RvsNR
             else:
                 out_q2 = self.fc_q2(out).softmax(-1)
-                return torch.cat([out_q1, out_q2],-1)
+                return torch.cat([out_q1, out_q2],-1), RvsNR
 
     def maybe_zero_weights(self, trainConsumption=True, trainKnowledge=True, trainPhys=True, do="All"):
         if not self.splitModel or (trainConsumption and trainKnowledge and trainPhys):

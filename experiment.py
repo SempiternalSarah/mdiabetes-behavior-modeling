@@ -5,7 +5,7 @@ import importlib
 
 class Experiment:
     
-    def __init__(self, data_kw={}, model="BasicLSTM", model_kw={}, train_kw={}, numValFolds=5, epochsToUpdateLabelMods=5, stateZeroEpochs=0, modelSplit=False, knowSchedule=[], physSchedule=[], consumpSchedule=[]):
+    def __init__(self, data_kw={}, model="BasicLSTM", model_kw={}, train_kw={}, numValFolds=5, epochsToUpdateLabelMods=5, stateZeroEpochs=0, modelSplit=False, knowSchedule=[], physSchedule=[], consumpSchedule=[], hierarchical=None, nrc=False, only_rnr=False):
         # data_kw:  dict of keyword arguments to BehaviorData instance
         # model_kw: dict of keyword arguments for Model instance
         # train_kw: dict of keyword arguments for training loop
@@ -15,11 +15,13 @@ class Experiment:
         self.model_name = model
         self.model_kw = model_kw
         self.train_kw = train_kw
+        self.nrc = nrc
+        self.only_rnr = only_rnr
         # similar to DQN - update label modifications based on network predictions
         # every x epochs
         # used to replace non responses with predicted responses
         self.epochsToUpdateLabelMods = epochsToUpdateLabelMods
-
+        self.hierarchical = hierarchical
         self.knowSchedule = knowSchedule
         self.physSchedule = physSchedule
         self.consumpSchedule = consumpSchedule
@@ -50,6 +52,23 @@ class Experiment:
                 output_size=output_size,
                 **model_kw,
             )
+            if (self.hierarchical == "Separate"):
+                model_kw["regression"] = False
+                self.physicalModelRNR = self._get_model()(
+                    input_size=self.bd.dimensions[0],
+                    output_size=2,
+                    **model_kw,
+                )
+                self.knowledgeModelRNR = self._get_model()(
+                    input_size=self.bd.dimensions[0],
+                    output_size=2,
+                    **model_kw,
+                )
+                self.consumptionModelRNR = self._get_model()(
+                    input_size=self.bd.dimensions[0],
+                    output_size=2,
+                    **model_kw,
+                )
             # define one model for shared functionality (like score reporting and optimizer creation)
             self.model = self.physicalModel
         else:
@@ -59,6 +78,13 @@ class Experiment:
                 output_size=output_size,
                 **model_kw,
             )
+            if (self.hierarchical == "Separate"):
+                model_kw["regression"] = False
+                self.modelRNR = self._get_model()(
+                    input_size=self.bd.dimensions[0],
+                    output_size=2,
+                    **model_kw,
+                )
         # yhat = self.model(self.bd.chunkedFeatures[0])
         # make_dot(yhat, params=dict(list(self.model.named_parameters()))).render("rnn_torchviz", format="png")
         
@@ -150,7 +176,7 @@ class Experiment:
             label = self.bd.chunkedLabels[indx]
             # important to note that we are not using batching here
             # one participants data is ONE sequence
-            pred = self.getPrediction(data)
+            pred, RvsNR = self.getPrediction(data)
             # we have to predict with one sequence at a time and then
             # stitch together the predictions and labels to calculate our metrics
             if (preds == None):
@@ -163,17 +189,26 @@ class Experiment:
             preds = torch.cat([preds[:, :3], preds[:, 3:]], 0)
             labels = torch.cat([labels[:, :3 + 1], labels[:, 3 + 1:]], 0)
         preds = preds.argmax(dim=1)
-        p1 = preds[labels[:, 1] == 1]
-        p2 = preds[labels[:, 2] == 1]
-        p3 = preds[labels[:, 3] == 1]
+        if (self.model.regression):
+            p1 = preds[labels[:, 0] == 1]
+            p2 = preds[labels[:, 0] == 2]
+            p3 = preds[labels[:, 0] == 3]
+        else:
+            p1 = preds[labels[:, 1] == 1]
+            p2 = preds[labels[:, 2] == 1]
+            p3 = preds[labels[:, 3] == 1]
         return p1, p2, p3
 
     # get prediction for sequence of data
     def getPrediction(self, datas, reporting=True):
+        RvsNR = None
         if not self.modelSplit:
-            pred = self.model.forward(datas)
+            pred, RvsNR = self.model.forward(datas)
         elif not self.bd.split_weekly_questions:
             pred = torch.zeros([datas.shape[0] * 2, self.model.output_size])
+            if (self.hierarchical == "Shared"):
+                RvsNR = torch.zeros([datas.shape[0] * 2, 2])
+                RvsNR.requires_grad = True
             pred.requires_grad = True
             # separate data by category for each weekly question
             # then, recombine the predictions using the indices
@@ -182,55 +217,66 @@ class Experiment:
             if consumptionRows2.numel() > 0 and (reporting or self.trainConsumption):
                 # print("c2")
                 consumptionRows2 = consumptionRows2.squeeze(dim=-1)
-                cpred2 = self.consumptionModel.forward(datas[consumptionRows2])
+                cpred2, temp = self.consumptionModel.forward(datas[consumptionRows2])
                 # these are predictions for weekly question 2
                 # add them to the tensor after all values for weekly question 1
                 consumptionRows2 += datas.shape[0]
+                if (self.hierarchical == "Shared"):
+                    RvsNR = RvsNR.index_add(0, consumptionRows2, temp)
                 # print(cpred2.shape, consumptionRows2.shape)
                 pred = pred.index_add(0, consumptionRows2, cpred2)
             knowledgeRows2 = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 1, 1, 0)).nonzero()
             if knowledgeRows2.numel() > 0 and (reporting or self.trainKnowledge):
                 # print("k2")
                 knowledgeRows2 = knowledgeRows2.squeeze(dim=-1)
-                kpred2 = self.knowledgeModel.forward(datas[knowledgeRows2])
+                kpred2, temp = self.knowledgeModel.forward(datas[knowledgeRows2])
                 # these are predictions for weekly question 2
                 # add them to the tensor after all values for weekly question 1
                 knowledgeRows2 += datas.shape[0]
+                if (self.hierarchical == "Shared"):
+                    RvsNR = RvsNR.index_add(0, knowledgeRows2, temp)
                 # print(kpred2.shape, knowledgeRows2)
                 pred = pred.index_add(0, knowledgeRows2, kpred2)
             physRows2 = (torch.where(datas[:, -1] == 1, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
             if physRows2.numel() > 0 and (reporting or self.trainPhysical):
                 # print("p2")
                 physRows2 = physRows2.squeeze(dim=-1)
-                ppred2 = self.physicalModel.forward(datas[physRows2])
+                ppred2, temp = self.physicalModel.forward(datas[physRows2])
                 # these are predictions for weekly question 2
                 # add them to the tensor after all values for weekly question 1
                 physRows2 += datas.shape[0]
+                if (self.hierarchical == "Shared"):
+                    RvsNR = RvsNR.index_add(0, physRows2, temp)
                 pred = pred.index_add(0, physRows2, ppred2)
             consumptionRows1 = (torch.where(datas[:, -3] == 0, 1, 0) * torch.where(datas[:, -4] == 0, 1, 0)).nonzero()
             if consumptionRows1.numel() > 0 and (reporting or self.trainConsumption):
                 # print("c1")
                 consumptionRows1 = consumptionRows1.squeeze(dim=-1)
-                cpred1 = self.consumptionModel.forward(datas[consumptionRows1])
+                cpred1, temp = self.consumptionModel.forward(datas[consumptionRows1])
+                if (self.hierarchical == "Shared"):
+                    RvsNR = RvsNR.index_add(0, consumptionRows1, temp)
                 pred = pred.index_add(0, consumptionRows1, cpred1)
             knowledgeRows1 = (torch.where(datas[:, -3] == 0, 1, 0) * torch.where(datas[:, -4] == 1, 1, 0)).nonzero()
             if knowledgeRows1.numel() > 0 and (reporting or self.trainKnowledge):
                 # print("k1")
                 knowledgeRows1 = knowledgeRows1.squeeze(dim=-1)
-                kpred1 = self.knowledgeModel.forward(datas[knowledgeRows1])
+                kpred1, temp = self.knowledgeModel.forward(datas[knowledgeRows1])
+                if (self.hierarchical == "Shared"):
+                    RvsNR = RvsNR.index_add(0, knowledgeRows1, temp)
                 pred = pred.index_add(0, knowledgeRows1, kpred1)
             physRows1 = (torch.where(datas[:, -3] == 1, 1, 0) * torch.where(datas[:, -4] == 0, 1, 0)).nonzero()
             if physRows1.numel() > 0 and (reporting or self.trainPhysical):
                 physRows1 = physRows1.squeeze(dim=-1)
                 # print("p1", physRows1, datas)
-                ppred1 = self.physicalModel.forward(datas[physRows1])
+                ppred1, temp = self.physicalModel.forward(datas[physRows1])
+                if (self.hierarchical == "Shared"):
+                    RvsNR = RvsNR.index_add(0, physRows1, temp)
                 pred = pred.index_add(0, physRows1, ppred1)
 
-            # reshape to match single model output
-            # final shape is 2 questions per row (1 row = 1 week for this participant)
-            pred = torch.cat((pred[0:datas.shape[0]], pred[datas.shape[0]:]), dim = 1)
         else:
             pred = torch.zeros([datas.shape[0], self.model.output_size])
+            if (self.hierarchical == "Shared"):
+                RvsNR = torch.zeros([datas.shape[0], 2])
             pred.requires_grad = True
             # separate data by category for each weekly question
             # then, recombine the predictions using the indices
@@ -239,25 +285,110 @@ class Experiment:
             if consumptionRows.numel() > 0 and (reporting or self.trainConsumption):
                 # print("c2")
                 consumptionRows = consumptionRows.squeeze(dim=-1)
-                cpred = self.consumptionModel.forward(datas[consumptionRows])
+                cpred, temp = self.consumptionModel.forward(datas[consumptionRows])
+                if (self.hierarchical == "Shared"):
+                    RvsNR = RvsNR.index_add(0, consumptionRows, temp)
                 # print(cpred2.shape, consumptionRows2.shape)
                 pred = pred.index_add(0, consumptionRows, cpred)
             knowledgeRows = (torch.where(datas[:, -1] == 0, 1, 0) * torch.where(datas[:, -2] == 1, 1, 0)).nonzero()
             if knowledgeRows.numel() > 0 and (reporting or self.trainKnowledge):
                 # print("k2")
                 knowledgeRows = knowledgeRows.squeeze(dim=-1)
-                kpred = self.knowledgeModel.forward(datas[knowledgeRows])
+                kpred, temp = self.knowledgeModel.forward(datas[knowledgeRows])
+                if (self.hierarchical == "Shared"):
+                    RvsNR = RvsNR.index_add(0, knowledgeRows, temp)
                 # print(kpred2.shape, knowledgeRows2)
                 pred = pred.index_add(0, knowledgeRows, kpred)
             physRows = (torch.where(datas[:, -1] == 1, 1, 0) * torch.where(datas[:, -2] == 0, 1, 0)).nonzero()
             if physRows.numel() > 0 and (reporting or self.trainPhysical):
                 # print("p2")
                 physRows = physRows.squeeze(dim=-1)
-                ppred = self.physicalModel.forward(datas[physRows])
+                ppred, temp = self.physicalModel.forward(datas[physRows])
+                if (self.hierarchical == "Shared"):
+                    RvsNR = RvsNR.index_add(0, physRows, temp)
                 pred = pred.index_add(0, physRows, ppred)
 
-        
-        return pred
+        # handle work for separate hierarchical classification
+        if (self.hierarchical == "Separate"):
+            if not self.modelSplit:
+                RvsNR, temp = self.modelRNR.forward(datas)
+            # print(classpreds.shape, RvsNR.shape)
+            elif not self.bd.split_weekly_questions:
+                RvsNR, temp = torch.zeros([datas.shape[0] * 2, 2])
+                RvsNR.requires_grad = True
+                if consumptionRows2.numel() > 0 and (reporting or self.trainConsumption):
+                    # print("c2")
+                    consumptionRows2 = consumptionRows2.squeeze(dim=-1)
+                    cRvsNR2, temp = self.consumptionModelRNR.forward(datas[consumptionRows2])
+                    # these are RvsNRictions for weekly question 2
+                    # add them to the tensor after all values for weekly question 1
+                    consumptionRows2 += datas.shape[0]
+                    # print(cRvsNR2.shape, consumptionRows2.shape)
+                    RvsNR = RvsNR.index_add(0, consumptionRows2, cRvsNR2)
+                if knowledgeRows2.numel() > 0 and (reporting or self.trainKnowledge):
+                    # print("k2")
+                    knowledgeRows2 = knowledgeRows2.squeeze(dim=-1)
+                    kRvsNR2, temp = self.knowledgeModelRNR.forward(datas[knowledgeRows2])
+                    # these are RvsNRictions for weekly question 2
+                    # add them to the tensor after all values for weekly question 1
+                    knowledgeRows2 += datas.shape[0]
+                    # print(kRvsNR2.shape, knowledgeRows2)
+                    RvsNR = RvsNR.index_add(0, knowledgeRows2, kRvsNR2)
+                if physRows2.numel() > 0 and (reporting or self.trainPhysical):
+                    # print("p2")
+                    physRows2 = physRows2.squeeze(dim=-1)
+                    pRvsNR2, temp = self.physicalModelRNR.forward(datas[physRows2])
+                    # these are RvsNRictions for weekly question 2
+                    # add them to the tensor after all values for weekly question 1
+                    physRows2 += datas.shape[0]
+                    RvsNR = RvsNR.index_add(0, physRows2, pRvsNR2)
+                if consumptionRows1.numel() > 0 and (reporting or self.trainConsumption):
+                    # print("c1")
+                    consumptionRows1 = consumptionRows1.squeeze(dim=-1)
+                    cRvsNR1, temp = self.consumptionModelRNR.forward(datas[consumptionRows1])
+                    RvsNR = RvsNR.index_add(0, consumptionRows1, cRvsNR1)
+                if knowledgeRows1.numel() > 0 and (reporting or self.trainKnowledge):
+                    # print("k1")
+                    knowledgeRows1 = knowledgeRows1.squeeze(dim=-1)
+                    kRvsNR1, temp = self.knowledgeModelRNR.forward(datas[knowledgeRows1])
+                    RvsNR = RvsNR.index_add(0, knowledgeRows1, kRvsNR1)
+                if physRows1.numel() > 0 and (reporting or self.trainPhysical):
+                    physRows1 = physRows1.squeeze(dim=-1)
+                    # print("p1", physRows1, datas)
+                    pRvsNR1, temp = self.physicalModelRNR.forward(datas[physRows1])
+                    RvsNR = RvsNR.index_add(0, physRows1, pRvsNR1)
+            else:
+                RvsNR = torch.zeros([datas.shape[0], 2])
+                RvsNR.requires_grad = True
+                if consumptionRows.numel() > 0 and (reporting or self.trainConsumption):
+                    # print("c2")
+                    cRvsNR, temp = self.consumptionModelRNR.forward(datas[consumptionRows])
+                    # print(cRvsNR2.shape, consumptionRows2.shape)
+                    RvsNR = RvsNR.index_add(0, consumptionRows, cRvsNR)
+                if knowledgeRows.numel() > 0 and (reporting or self.trainKnowledge):
+                    # print("k2")
+                    kRvsNR, temp = self.knowledgeModelRNR.forward(datas[knowledgeRows])
+                    # print(kRvsNR2.shape, knowledgeRows2)
+                    RvsNR = RvsNR.index_add(0, knowledgeRows, kRvsNR)
+                if physRows.numel() > 0 and (reporting or self.trainPhysical):
+                    # print("p2")
+                    pRvsNR, temp = self.physicalModelRNR.forward(datas[physRows])
+                    RvsNR = RvsNR.index_add(0, physRows, pRvsNR)
+            if (not self.bd.split_weekly_questions):
+                RvsNR = torch.cat((RvsNR[:, 0:RvsNR.shape[-1]], RvsNR[:, RvsNR.shape[-1]:]), dim = -1)
+            if (self.model.regression):
+                pred = pred + 1
+                pred = torch.where((RvsNR[:, 0] > RvsNR[:, 1]).unsqueeze(-1), (RvsNR[:, 1]).unsqueeze(-1), pred)
+            else:
+                pred = torch.cat([RvsNR[:, 0].unsqueeze(-1), (RvsNR[:, 1]).unsqueeze(-1) * pred[:, 1:]], -1)
+
+        if (self.modelSplit and not self.bd.split_weekly_questions):
+            # reshape to match single model output
+            # final shape is 2 questions per row (1 row = 1 week for this participant)
+            pred = torch.cat((pred[0:datas.shape[0]], pred[datas.shape[0]:]), dim = 1)
+
+        # print(RvsNR)
+        return pred, RvsNR
 
 
     def train_epoch_val(self, opt, trainSet):
@@ -266,6 +397,7 @@ class Experiment:
         preds = None
         labels = None
         datas = None
+        RvsNRs = None
         opt.zero_grad()
         for indx in trainSet:
             # extract one participants data
@@ -273,19 +405,23 @@ class Experiment:
             label = self.bd.chunkedLabels[indx]
             # important to note that we are not using batching here
             # one participants data is ONE sequence
-            pred = self.getPrediction(data)
+            pred, RvsNR = self.getPrediction(data)
             # we have to predict with one sequence at a time and then
             # stitch together the predictions and labels to calculate our metrics
             if (preds == None):
                 preds = pred
                 labels = label
                 datas = data
+                if (self.hierarchical):
+                    RvsNRs = RvsNR
             else: 
                 preds = torch.cat([preds, pred], dim = 0)
                 labels = torch.cat([labels, label], dim = 0)
                 datas = torch.cat([datas, data], dim = 0)
+                if (self.hierarchical):
+                    RvsNRs = torch.cat([RvsNRs, RvsNR], dim=0)
             
-        loss1 = self.model.train_step(preds, labels)
+        loss1 = self.model.train_step(preds, labels, RvsNRs)
         if (loss1 != None):
             loss.append(loss1)
             loss1.backward()
@@ -300,7 +436,7 @@ class Experiment:
                 for indx in set:
                     # extract one participants data
                     data = self.bd.get_features(indx)
-                    pred = self.getPrediction(data)
+                    pred, RvsNR = self.getPrediction(data)
                     self.bd.set_feature_response_mods(indx, pred.detach().numpy())
 
         
@@ -312,14 +448,19 @@ class Experiment:
         test_metrics = []
         opts = []
         scheds = []
+        modelList = []
         if (self.modelSplit):
-            for model in [self.consumptionModel, self.knowledgeModel, self.physicalModel]:
-                opt, sched = model.make_optimizer()
-                opts.append(opt)
-                scheds.append(sched)
+            modelList += [self.consumptionModel, self.knowledgeModel, self.physicalModel]
+            if (self.hierarchical == "Separate"):
+                modelList += [self.consumptionModelRNR, self.knowledgeModelRNR, self.consumptionModelRNR]
         else:
-            opt, sched = self.model.make_optimizer()
+            modelList.append(self.model)
+            if (self.hierarchical == "Separate"):
+                modelList.append(self.modelRNR)
+        for model in modelList:
+            opt, sched = model.make_optimizer()
             opts.append(opt)
+            scheds.append(sched)
         epochs = self.train_kw.get("epochs", 1)
         rec_every = self.train_kw.get("rec_every", 5)
         for e in range(epochs):
@@ -368,8 +509,13 @@ class Experiment:
                 # tmetrics, tlabels = self.report_scores()
                 # test_metrics.append(tmetrics)
                 # print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}", f"train conAcc: {metrics[labels.index('AccConsumption')]:.3%}", f"test conAcc: {tmetrics[labels.index('AccConsumption')]:.3%}", f"train knowAcc: {metrics[labels.index('AccKnowledge')]:.3%}", f"test knowAcc: {tmetrics[labels.index('AccKnowledge')]:.3%}")
-                if (self.modelSplit):
-                    print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}", f"train conAcc: {metrics[labels.index('AccConsumption')]:.3%}", f"test conAcc: {tmetrics[labels.index('AccConsumption')]:.3%}", f"train knowAcc: {metrics[labels.index('AccKnowledge')]:.3%}", f"test knowAcc: {tmetrics[labels.index('AccKnowledge')]:.3%}")
+                if (self.only_rnr):    
+                    print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train class accs: {metrics[labels.index('Acc0')]:.3%},{metrics[labels.index('Acc1')]:.3%}", f"test class accs: {tmetrics[labels.index('Acc0')]:.3%},{tmetrics[labels.index('Acc1')]:.3%}")
+                elif (self.nrc):
+                    # print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train class accs: {metrics[labels.index('Acc0')]:.3%},{metrics[labels.index('Acc1')]:.3%},{metrics[labels.index('Acc2')]:.3%},{metrics[labels.index('Acc3')]:.3%}", f"test class accs: {tmetrics[labels.index('Acc0')]:.3%},{tmetrics[labels.index('Acc1')]:.3%},{tmetrics[labels.index('Acc2')]:.3%},{tmetrics[labels.index('Acc3')]:.3%}")
+                    print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train res accs: {metrics[labels.index('Acc0')]:.3%}, {metrics[labels.index('AccRes')]:.3%}", f"test response acc: {tmetrics[labels.index('Acc0')]:.3%}, {tmetrics[labels.index('AccRes')]:.3%}")
+                elif (self.modelSplit):
+                     print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}", f"train exerAcc: {metrics[labels.index('AccExercise')]:.3%}", f"test exerAcc: {tmetrics[labels.index('AccExercise')]:.3%}", f"train conAcc: {metrics[labels.index('AccConsumption')]:.3%}", f"test conAcc: {tmetrics[labels.index('AccConsumption')]:.3%}", f"train knowAcc: {metrics[labels.index('AccKnowledge')]:.3%}", f"test knowAcc: {tmetrics[labels.index('AccKnowledge')]:.3%}")
                 else:
                     print(f'{e}\t', f"train loss: {lh[0]:.4f}", f"train acc: {metrics[labels.index('Acc')]:.3%}", f"test acc: {tmetrics[labels.index('Acc')]:.3%}")
             for sched in scheds:
@@ -396,7 +542,7 @@ class Experiment:
             label = self.bd.chunkedLabels[indx]
             # important to note that we are not using batching here
             # one participants data is ONE sequence
-            pred = self.getPrediction(data)
+            pred, RvsNR = self.getPrediction(data)
             # we have to predict with one sequence at a time and then
             # stitch together the predictions and labels to calculate our metrics
             if (preds == None):
@@ -425,19 +571,20 @@ class Experiment:
         preds = None
         labels = None
         datas = None
+        RvsNRs = None
         for opt in opts:
             opt.zero_grad()
         for indx in self.bd.train:
             # extract one participants data
             data  = self.bd.get_features(indx)
             label = self.bd.chunkedLabels[indx]
-
+            # print(data.shape)
             # important to note that we are not using batching here (FOR THE LSTM)
             # one participants data is ONE sequence
             # for non LSTM models, the participants data is batched by week
             # no special trick here - the dimensions work to be non batched in LSTM (as desired)
             # and batched by week for non LSTM models (also as desired)
-            pred = self.getPrediction(data, reporting=False)
+            pred, RvsNR = self.getPrediction(data, reporting=False)
             
 
             # we have to predict with one sequence at a time and then
@@ -446,12 +593,16 @@ class Experiment:
                 preds = pred
                 labels = label
                 datas = data
+                if (self.hierarchical):
+                    RvsNRs = RvsNR
             else: 
                 preds = torch.cat([preds, pred], dim = 0)
                 labels = torch.cat([labels, label], dim = 0)
                 datas = torch.cat([datas, data], dim = 0)
+                if (self.hierarchical):
+                    RvsNRs = torch.cat([RvsNRs, RvsNR], dim=0)
             
-        loss1 = self.model.train_step(preds, labels)
+        loss1 = self.model.train_step(preds, labels, RvsNRs)
         if (loss1 != None):
             loss.append(loss1)
             loss1.backward()
@@ -481,7 +632,7 @@ class Experiment:
             label = self.bd.chunkedLabels[indx]
             # important to note that we are not using batching here
             # one participants data is ONE sequence
-            pred = self.getPrediction(data)
+            pred, RvsNR = self.getPrediction(data)
             pred = pred.view(label.shape)
             evals.append(self.diff_matrix(label, pred))
         return evals
@@ -493,7 +644,7 @@ class Experiment:
                 # extract one participants data
                 data = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
-                pred = self.getPrediction(data)
+                pred, RvsNR = self.getPrediction(data)
                 if (preds == None):
                     datas = data
                     preds = pred
@@ -512,7 +663,7 @@ class Experiment:
                 # extract one participants data
                 data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
-                pred = self.getPrediction(data)
+                pred, RvsNR = self.getPrediction(data)
                 score, label = self.model.report_scores_min(label, pred, data)
                 if (len(score) > 0):
                     scores.append(score)
@@ -525,7 +676,7 @@ class Experiment:
                 # extract one participants data
                 data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
-                pred = self.getPrediction(data)
+                pred, RvsNR = self.getPrediction(data)
                 score, label = self.model.report_scores_min(label, pred, data)
                 if (len(score) > 0):
                     scores.append(score)
@@ -539,7 +690,7 @@ class Experiment:
                 # extract one participants data
                 data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
-                pred = self.getPrediction(data)
+                pred, RvsNR = self.getPrediction(data)
                 if (preds == None):
                     preds = pred
                     labels = label
@@ -558,7 +709,7 @@ class Experiment:
                 # extract one participants data
                 data  = self.bd.get_features(indx)
                 label = self.bd.chunkedLabels[indx]
-                pred = self.getPrediction(data)
+                pred, RvsNR = self.getPrediction(data)
                 if (preds == None):
                     datas = data
                     preds = pred

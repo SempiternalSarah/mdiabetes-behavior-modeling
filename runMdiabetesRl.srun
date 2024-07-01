@@ -1,0 +1,17 @@
+#!/bin/bash
+#SBATCH --partition=compute
+#SBATCH --job-name=mdiabetesRl
+#SBATCH --output=/dev/null
+#SBATCH --error=ERRORMDBRL.err
+#SBATCH --time=24:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=32000M
+#SBATCH --account=ailab
+module load miniconda
+module load racs-eb/1
+module load Mesa/17.2.5-foss-2017b
+conda activate mdiabetes
+srun python /home/abutler9/ailab/mdiabetes-behavior-modeling/mdiabetes_rl_exp.py --cuda False --logging True --seed $1 --statepred $2
+

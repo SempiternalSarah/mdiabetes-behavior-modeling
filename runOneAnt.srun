@@ -1,0 +1,16 @@
+#!/bin/bash
+#SBATCH --partition=gpulong
+#SBATCH --job-name=mdiabetesMujoco$1
+#SBATCH --output=/dev/null
+#SBATCH --error=ERRORMUJOCOGPU.err
+#SBATCH --time=50:00:00
+#SBATCH --nodes=1
+#SBATCH --gpus=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=32000M
+#SBATCH --account=ailab
+module load miniconda
+module load cuda
+conda activate mdiabetes
+srun python /home/abutler9/ailab/mdiabetes-behavior-modeling/NOTOUCH_mujoco_exp.py --cuda True --env $1 --logging True --numHidden $2 --seed $3 --statepred $4 --qlr $5 --actlr $6 --statelr $7 --startLearning $8 --hiddenSizeLSTM $9 --context ${10}

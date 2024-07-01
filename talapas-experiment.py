@@ -14,26 +14,43 @@ def toBool(x):
 
 # expanded states
 parser.add_argument('-model', type=str, default="BasicNN")
-parser.add_argument('-numWeeks', type=int, default=1)
-parser.add_argument('-estate', type=toBool, default=False)
-parser.add_argument('-includeState', type=toBool, default=False)
-parser.add_argument('-fullQ', type=toBool, default=False)
+parser.add_argument('-numWeeks', type=int, default=3)
+parser.add_argument('-estate', type=toBool, default=True)
+parser.add_argument('-includeState', type=toBool, default=True)
+parser.add_argument('-fullQ', type=toBool, default=True)
 parser.add_argument('-insertPreds', type=toBool, default=False)
-parser.add_argument('-splitQ', type=toBool, default=False)
-parser.add_argument('-splitM', type=toBool, default=False)
+parser.add_argument('-splitQ', type=toBool, default=True)
+parser.add_argument('-splitM', type=toBool, default=True)
 parser.add_argument('-catHist', type=toBool, default=False)
-parser.add_argument('-knowEpochs', type=int, default=30)
-parser.add_argument('-physEpochs', type=int, default=50)
-parser.add_argument('-conEpochs', type=int, default=100)
+parser.add_argument('-knowEpochs', type=int, default=1000)
+parser.add_argument('-physEpochs', type=int, default=1000)
+parser.add_argument('-conEpochs', type=int, default=1000)
 parser.add_argument('-smooth', type=float, default=0)
 parser.add_argument('-noise', type=float, default=0.07)
-parser.add_argument('-learning_rate', type=float, default=0.07)
+parser.add_argument('-learning_rate', type=float, default=0.001)
+parser.add_argument('-respond_perc', type=float, default=0.5)
+parser.add_argument('-hierarchical', type=str, default="Shared")
+parser.add_argument('-regression', type=toBool, default=False)
+parser.add_argument('-nrclass', type=toBool, default=False)
+parser.add_argument('-sepHierLoss', type=toBool, default=False)
+parser.add_argument('-seeds', type=int, default=5)
+parser.add_argument('-only_rnr', type=toBool, default=False)
+parser.add_argument('-transformer', type=toBool, default=False)
+parser.add_argument('-save', type=toBool, default=True)
+parser.add_argument('-cluster_by', type=str, default=None)
+parser.add_argument('-num_clusters', type=int, default=3)
+parser.add_argument('-cluster_method', type=str, default="Kmeans")
+
+
 
 args = parser.parse_args()
 
+if (args.hierarchical != "Shared" and args.hierarchical != "Separate"):
+    args.hierarchical = None
+
 model = args.model
 
-respond_perc = .5
+respond_perc = args.respond_perc
 
 conSched = [args.conEpochs]
 knowSched = [args.knowEpochs]
@@ -51,7 +68,10 @@ numWeeks = args.numWeeks
 
 insertPreds = args.insertPreds
 
-loss_fn = "CrossEntropyLoss"
+if (args.regression):
+    loss_fn = "MSELoss"
+else:
+    loss_fn = "CrossEntropyLoss"
 
 include_state, estate, fullq = args.includeState, args.estate, args.fullQ
 
@@ -62,14 +82,17 @@ if "LSTM" in model:
 else:
     stateweek = 500
 
-if epochs > 400:
-    hiddenSize = 100
+if epochs > 900:
+    hiddenSize = 50
     lrmult = 1.0
 else:
-    hiddenSize = 25
+    if (args.transformer):
+        hiddenSize = 25
+    else:
+        hiddenSize = 50
     lrmult = 0.9
 
-for seed in range(30):
+for seed in range(args.seeds):
     np.random.seed(seed)
     torch.manual_seed(seed)
     e = Experiment(
@@ -79,6 +102,9 @@ for seed in range(30):
         knowSchedule = knowSched,
         consumpSchedule = conSched,
         physSchedule = physSched,
+        hierarchical=args.hierarchical,
+        nrc=args.nrclass,
+        only_rnr=args.only_rnr,
         data_kw={"minw": 2,
                 "maxw": 31,
                 "include_state": include_state,
@@ -92,6 +118,12 @@ for seed in range(30):
                 "split_weekly_questions": splitQ,
                 "category_specific_history": catHist,
                 "max_state_week": stateweek,
+                "regression": args.regression,
+                "no_response_class": args.nrclass,
+                "only_rnr": args.only_rnr,
+                "cluster_by": args.cluster_by,
+                "num_clusters": args.num_clusters,
+                "cluster_method": args.cluster_method
                 },
         model=model,
         model_kw={
@@ -107,7 +139,13 @@ for seed in range(30):
             "labelSmoothPerc": smooth,
             "gaussianNoiseStd": noise,
             "splitModel": splitM,
-            "splitWeeklyQuestions": splitQ
+            "splitWeeklyQuestions": splitQ,
+            "hierarchical": args.hierarchical,
+            "regression": args.regression,
+            "no_response_class": args.nrclass,
+            "separateHierLoss": args.sepHierLoss,
+            "only_rnr": args.only_rnr,
+            "transformer": args.transformer
         },
         train_kw={
             "epochs": epochs,
@@ -119,20 +157,28 @@ for seed in range(30):
 
 
 
+
+    if not args.save:
+        continue
     individual_test_scores, labels = e.report_scores_individual_test()
     individual_train_scores, labels = e.report_scores_individual_train()
 
-
-    if epochs > 400:
-        dire = f"/home/abutler9/ailab/mdiabetes-behavior-modeling/experiment_output_long/{model}/"
+    if args.transformer:
+        finalDir = f"{model}Attn"
     else:
-        dire = f"/home/abutler9/ailab/mdiabetes-behavior-modeling/experiment_output/{model}/"
+        finalDir = f"{model}"
+    if args.cluster_by != None:
+        finalDir = f"{finalDir}/cluster{args.cluster_by}"
+    if epochs > 900:
+        dire = f"/home/abutler9/ailab/mdiabetes-behavior-modeling/experiment_output_long/{finalDir}/"
+    else:
+        dire = f"/home/abutler9/ailab/mdiabetes-behavior-modeling/experiment_output/{finalDir}/"
 
     if (not os.path.exists(dire)):
         os.makedirs(dire)
 
 
-    fileprefix = f"W{numWeeks}LR{learning_rate}Resp{respond_perc}States{int(include_state)}Expanded{int(estate)}Full{int(fullq)}CHist{int(catHist)}Pred{int(insertPreds)}Smooth{smooth}Noise{noise}Split{int(splitQ)}{int(splitM)}"
+    fileprefix = f"C{args.num_clusters}{args.cluster_method}R{int(args.regression)}NR{args.nrclass}H{args.hierarchical}{int(args.sepHierLoss)}W{numWeeks}LR{learning_rate}Resp{respond_perc}States{int(include_state)}Expanded{int(estate)}Full{int(fullq)}CHist{int(catHist)}Pred{int(insertPreds)}Smooth{smooth}Noise{noise}Split{int(splitQ)}{int(splitM)}"
     np.savetxt(f"{dire}TRAINMETRICS-{fileprefix}S{seed}.csv", report["train_metrics"], delimiter = ',', header = ','.join(report['metric_labels']))
     np.savetxt(f"{dire}TESTMETRICS-{fileprefix}S{seed}.csv", report["test_metrics"], delimiter = ',', header = ','.join(report['metric_labels']))
     np.savetxt(f"{dire}IDVDTESTMETRICS-{fileprefix}S{seed}.csv", individual_test_scores, delimiter = ',', header = ','.join(report['metric_labels']))
@@ -154,6 +200,7 @@ for seed in range(30):
     np.savetxt(f"{dire}TESTPREDS3-{fileprefix}S{seed}.csv", preds3, delimiter = ',')
 
 
+    torch.save(e.model, f"{dire}TRAINEDMODEL-{fileprefix}S{seed}.pt")
 
     writer = open(f"{dire}FINALTRAINMETRICS-{fileprefix}.csv", "a")
     writer.write(",".join([str(loss) for loss in report["train_metrics"][-1, :]]))

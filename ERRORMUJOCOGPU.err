@@ -1,0 +1,15 @@
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** STEP 5742912.0 ON n0157 CANCELLED AT 2024-06-21T17:39:10 DUE TO TIME LIMIT ***
+slurmstepd: error: *** JOB 5742912 ON n0157 CANCELLED AT 2024-06-21T17:39:10 DUE TO TIME LIMIT ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** STEP 5742913.0 ON n0169 CANCELLED AT 2024-06-21T19:11:42 DUE TO TIME LIMIT ***
+slurmstepd: error: *** JOB 5742913 ON n0169 CANCELLED AT 2024-06-21T19:11:42 DUE TO TIME LIMIT ***
+slurmstepd: error: *** STEP 5742916.0 ON n0162 CANCELLED AT 2024-06-21T19:12:12 DUE TO TIME LIMIT ***
+slurmstepd: error: *** JOB 5742916 ON n0162 CANCELLED AT 2024-06-21T19:12:12 DUE TO TIME LIMIT ***
+slurmstepd: error: *** JOB 5742914 ON n0156 CANCELLED AT 2024-06-21T19:12:12 DUE TO TIME LIMIT ***
+slurmstepd: error: *** JOB 5742915 ON n0156 CANCELLED AT 2024-06-21T19:12:12 DUE TO TIME LIMIT ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** STEP 5742915.0 ON n0156 CANCELLED AT 2024-06-21T19:12:12 DUE TO TIME LIMIT ***
+slurmstepd: error: *** STEP 5742914.0 ON n0156 CANCELLED AT 2024-06-21T19:12:12 DUE TO TIME LIMIT ***

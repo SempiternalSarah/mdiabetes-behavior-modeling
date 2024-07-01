@@ -13,4 +13,8 @@ data/
 *.pickle
 *.zip
 **/TEMP
+*.pt
+CONTAINMENTZONE/**
 saved_data/**
+saved_mujoco/**
+saved_mdiabetes_rl/**

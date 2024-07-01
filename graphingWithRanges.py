@@ -4,25 +4,37 @@ import os
 
 
 metrics = ["AccConsumption", "AccKnowledge", "AccExercise"]
+metrics = ["Acc0", "Acc1", "Acc2", "Acc3"]
 metrics = ["Acc"]
-w = 2
+# metrics = ["# MSE"]
+w = 3
 resp = 0.5
 states = 1
 estates = 1
-full = 0
-insertPred = 0
+full = 1
+insertPred = 1
 smooth = 0.0
-noise = 0.00
-splitQ = 0
+noise = 0.05
+splitQ = 1
 splitW = 1
 chist = 0
-maxEpochs = 500
+maxEpochs = 1000
+reg = 0
+nrclass = True
+hier = "None"
+# hier = "Separate"
+hier = "Shared"
+sharedHierLoss = 0
+cluster = "Demographics"
+nc = 3
+cmethod = "Gaussian"
 
-header = ["# MSE","CE","NDCG","MRR","Acc","AccConsumption","AccExercise","AccKnowledge","Acc1","Acc2","Acc3","Prec1","Prec2","Prec3","Rec1","Rec2","Rec3","Count1","Count2","Count3","Week0Acc","Week1Acc","Week2Acc","Week3Acc","Week4Acc","Week5Acc","Week6Acc","Week7Acc","Week8Acc","Week9Acc","Week10Acc","Week11Acc","Week12Acc","Week13Acc","Week14Acc","Week15Acc","Week16Acc","Week17Acc","Week18Acc","Week19Acc","Week20Acc","Week21Acc","Week22Acc","Week23Acc"]
-
-for (model, LR) in [("BasicNN", 0.007)]:
-    dir = f"./experiment_output_long/{model}/"
-    filename = f"TESTMETRICS-W{w}LR{LR}Resp{resp}States{states}Expanded{estates}Full{full}CHist{chist}Pred{insertPred}Smooth{smooth}Noise{noise}Split{splitQ}{splitW}"
+for (model, LR) in [("AdaptableLSTM", 0.002), ("BasicNN", .0025)]:
+    dir = f"./experiment_output_long/{model}Attn/cluster{cluster}/"
+    filePrefix = f"C{nc}{cmethod}R{reg}NR{nrclass}H{hier}{sharedHierLoss}W{w}LR{LR}Resp{resp}States{states}Expanded{estates}Full{full}CHist{chist}Pred{insertPred}Smooth{smooth}Noise{noise}Split{splitQ}{splitW}"
+    filename = f"TESTMETRICS-{filePrefix}"
+    header = np.loadtxt(f"{dir}{filename}S0.csv", delimiter=",", skiprows=0, max_rows=1, dtype=str, comments=None).tolist()
+    print(header)
     cols = [header.index(metric) for metric in metrics]
     testresults = []
     for seed in range(500):
@@ -38,7 +50,7 @@ for (model, LR) in [("BasicNN", 0.007)]:
     testmins = testresults.min(axis=-1)
 
 
-    filename = f"TRAINMETRICS-W{w}LR{LR}Resp{resp}States{states}Expanded{estates}Full{full}CHist{chist}Pred{insertPred}Smooth{smooth}Noise{noise}Split{splitQ}{splitW}"
+    filename = f"TRAINMETRICS-{filePrefix}"
     cols = [header.index(metric) for metric in metrics]
     results = []
     for seed in range(500):

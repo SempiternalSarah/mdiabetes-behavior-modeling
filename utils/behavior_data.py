@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 import os
 from sklearn.preprocessing import OrdinalEncoder
+from sklearn.mixture import GaussianMixture
+import sklearn.cluster
 import matplotlib.pyplot as plt
 from utils.state_data import StateData
 from utils.content import StatesHandler, QuestionHandler, MessageHandler
@@ -31,8 +33,11 @@ class BehaviorData:
                  category_specific_history = False,
                  no_response_class = False,
                  regression = False,
-                 split_column = None,
-                 split_values = []):
+                 num_clusters = 3,
+                 cluster_by = None,
+                 cluster_method = "Kmeans",
+                 only_rnr = False,
+                 predictStates = False):
         # minw, maxw: min and max weeks to collect behavior from
         # include_pid: should the participant id be a feature to the model
         # include_state: should the participant state be a feature
@@ -63,6 +68,10 @@ class BehaviorData:
         self.active_samp = active_samp if active_samp is not None else 1
         # not used
         self.window = window
+        # clustering info
+        self.cluster_by = cluster_by
+        self.num_clusters = num_clusters
+        self.cluster_method = cluster_method
         # insert noise to response features
         self.responseFeatureNoise = response_feature_noise
         # calculate file name for storing/loading data
@@ -78,10 +87,12 @@ class BehaviorData:
         self.split_model_features = split_model_features
         self.no_response_class = no_response_class
         self.regression = regression
+        self.only_rnr = only_rnr
+        self.predictStates = predictStates
 
-        self.fname = f"./saved_data/{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.num_weeks_history}{self.category_specific_history}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}{self.split_weekly_questions}{self.no_response_class}{self.regression}.pickle"
+        self.fname = f"./saved_data/{self.minw}-{self.maxw}{self.include_pid}{self.include_state}{self.max_state_week}{self.expanded_states}{self.full_questionnaire}{self.num_weeks_history}{self.category_specific_history}{self.oneHotResponseFeatures}{self.top_respond_perc}{self.split_model_features}{self.split_weekly_questions}{self.no_response_class}{self.regression}{self.only_rnr}{self.num_clusters}{self.cluster_by}{self.cluster_method}{self.predictStates}.pickle"
 
-        
+        # print(self.include_state, self.expanded_states, self.full_questionnaire)
 
         # data saved - we can just load it
         if os.path.exists(self.fname):
@@ -94,6 +105,7 @@ class BehaviorData:
         # calculate mask to zero out state values if later desired
         self.stateZeroMask = torch.where(torch.tensor(self.featureList == "state"), 0, 1)
 
+        # print(self.featureList)
         # find index of first response value so we don't have to compute this again
         # used to replace non responses with the model's prediction
         for idx, feature in enumerate(self.featureList):
@@ -112,7 +124,6 @@ class BehaviorData:
         for idx in self.test:
             self.responseMods[idx] = np.zeros_like(self.chunkedFeatures[idx])
 
-        print(self.featureList)
 
         
     # splits data into test and training
@@ -218,17 +229,17 @@ class BehaviorData:
 
 
     # load state information from the baseline questionnaire
-    def load_questionnaire_states(self):
+    def load_questionnaire_states(self, endline=False):
         if (self.full_questionnaire):
-            sh = StatesHandler(map="map_individual.json")
+            sh = StatesHandler(map="map_individual.json", endline=endline)
             if (self.expanded_states):
-                shForIds = StatesHandler(map="map_detailed.json")
+                shForIds = StatesHandler(map="map_detailed.json", endline=endline)
             else:
-                shForIds = StatesHandler(map="map.json")
+                shForIds = StatesHandler(map="map.json", endline=endline)
         elif (self.expanded_states):
-            sh = StatesHandler(map="map_detailed.json")
+            sh = StatesHandler(map="map_detailed.json", endline=endline)
         else:
-            sh = StatesHandler(map="map.json")
+            sh = StatesHandler(map="map.json", endline=endline)
         whatsapps, states, qlist = sh.compute_states()
         states = states.numpy()
 
@@ -294,7 +305,9 @@ class BehaviorData:
         counts = df.groupby("pid")['response_count'].sum().sort_values()
         # find cutoff value (participants with fewer total responses are removed)
         cutoff_idx = int((len(counts)) * (1 - self.top_respond_perc))
-        print(cutoff_idx, len(counts))
+        # print(counts)
+        print(counts[cutoff_idx:])
+        # print(cutoff_idx, len(counts))
         # select top responders
         df = df[df["pid"].isin(counts[cutoff_idx:].keys())]
         # save response counts for later use
@@ -321,6 +334,74 @@ class BehaviorData:
             counts = self.data.groupby(elem)['response_count'].sum()
             totals = 2 * self.data.groupby(elem)['response_count'].count()
         return (counts/totals).values
+    
+    def assign_cluster_features(self, d: pd.DataFrame):
+        if self.cluster_by is None:
+            return d
+        # keep reference to original dataframe to modify and return
+        df = d
+        # grab the last week row for each participant
+        if (self.cluster_by == "History" or self.cluster_by == "All"):
+            week = d['week'].max()
+        else:
+            week = 0
+        d = d[d['week'] == week]
+        # make copy just to be safe
+        d = d.copy()
+
+        if (self.cluster_by == "History"):
+            cols = [col for col in d.columns if "_last_" in col]
+            vals = d[cols].to_numpy()
+        elif (self.cluster_by == "Initial"):
+            vals = np.array([val for val in d["state"]])
+        elif (self.cluster_by == "All"):
+            cols = [col for col in d.columns if "_last_" in col]
+            vals = d[cols].to_numpy()
+            # print(vals.shape)
+            vals2 = np.array([val for val in d["state"]])
+            # print(vals2.shape)
+            vals = np.concatenate([vals, vals2], axis=1)
+            # print(vals.shape)
+        elif (self.cluster_by == "Demographics"):
+            vals = np.array([val for val in d["state"]])
+            vals = vals[:, -5:]
+            # print(vals)
+        else:
+            print("INVALID CLUSTER OPTION")
+            exit(-1)
+        # unpack any tuples inside the array
+        unpacked = []
+        for row in vals:
+            unpackedRow = []
+            for entry in row:
+                if (type(entry) is tuple):
+                    for item in entry:
+                        unpackedRow.append(item)
+                else:
+                    unpackedRow.append(entry)
+            unpacked.append(unpackedRow)
+        vals = np.array(unpacked)
+
+        # normalize each column to have a max of 1
+        vals = vals / vals.max(axis=1)[:,None]
+
+        # form clusters
+        if (self.cluster_method == "Kmeans"):
+            kmeans = sklearn.cluster.KMeans(n_clusters=self.num_clusters).fit(vals)
+            labels = kmeans.labels_
+        elif (self.cluster_method == "Gaussian"):
+            gm = GaussianMixture(n_components=self.num_clusters).fit(vals)
+            labels = gm.predict(vals)
+        elif (self.cluster_method == "Spectral"):
+            labels = sklearn.cluster.SpectralClustering(n_clusters=self.num_clusters).fit_predict(vals)
+        # print(labels)
+        # add cluster number to every row for each participant
+        lookup = dict(zip(d["pid"].to_numpy(), labels))
+        def setCluster(row):
+            return lookup[row["pid"]]
+        df["cluster"] = df.apply(setCluster, axis=1)
+        # print (df["cluster"])
+        return df
 
 
     def build(self):
@@ -330,6 +411,7 @@ class BehaviorData:
         enc = OrdinalEncoder().fit_transform
         # load dictionary of pids to states
         init_states, start_weeks = self.load_questionnaire_states()
+        final_states, temp = self.load_questionnaire_states(endline=True)
         # filter out rows that aren't supposed to be here
         # unsure where they come from but they aren't listed in the all_ai_participants.csv
         d = d[d["pid"].isin(list(dict.keys(init_states)))]
@@ -355,8 +437,15 @@ class BehaviorData:
                 return np.zeros_like(init_states[row["pid"]])
             else:
                 return init_states[row["pid"]]
-
         d["state"] = d.apply(replaceState, axis=1)
+        def fillFinalState(row):
+            if row["pid"] in final_states:
+                return final_states[row["pid"]]
+            else:
+                return np.NaN
+        d["finalState"] = d.apply(fillFinalState, axis=1)
+        if (self.predictStates):
+            d = d.dropna(subset=["finalState"])
 
         # rescale pid values in case we want to use them as features
         d["pidFeat"] = enc(d["pid"].values.reshape(-1,1)).astype(int)
@@ -435,7 +524,7 @@ class BehaviorData:
                 return (0, 0)
         # go through and insert msg/question/response for all weeks as appropriate
         for elem in ["pmsg_sids", "paction_sids", "pmsg_ids", "qids", "response"]:
-            print(elem)
+            # print(elem)
             for week in range(self.num_weeks_history + 1):
                 d[f"{elem}_last_{week}"] = d.apply(lambda row: construct_week_elem(row, week, elem), axis=1, result_type='reduce')
 
@@ -444,11 +533,16 @@ class BehaviorData:
         # indices will REMAIN THE SAME for the encoded pytorch tensor
         # nonzero() returns a 1 element tuple, unpack, take 0th entry off (it's 0)
         # convert to list for later use
+        if (self.predictStates):
+            d = d[d["week"] == 23]
         self.nzindices = d["pid"].diff().to_numpy().nonzero()[0][1:].tolist()
         # if we're splitting the rows into 2, double split values
         if (self.split_weekly_questions):
             for x in range(len(self.nzindices)):
                 self.nzindices[x] = self.nzindices[x] * 2
+        d = self.assign_cluster_features(d)
+        
+
         return d
     
     def encode(self, data: pd.DataFrame):
@@ -463,8 +557,12 @@ class BehaviorData:
             if x2 is not None:
                 X.append(x2)
                 Y.append(y2)
-        X, Y = np.stack(X), np.stack(Y)
-        print(X.shape, Y.shape, len(featureList))
+        # for x in X:
+        #     print(x.shape)
+
+        X = np.stack(X)
+        Y = np.stack(Y)
+        # print(X.shape, Y.shape, len(featureList))
         return torch.tensor(X).float(), torch.tensor(Y).float(), np.array(featureList)
                 
     def encode_row(self, row):
@@ -502,7 +600,6 @@ class BehaviorData:
                 elems.append(f"{elem}_last_{week}")
             ls += [maxSVal,maxSVal,57,32]
         feats_to_enc = np.array(row[elems].values)
-        feats_to_enc = feats_to_enc.tolist()
         
         if self.include_pid:
             X = np.array([row["pidFeat"]])
@@ -514,85 +611,114 @@ class BehaviorData:
             featureList += ["state"] * len(row["state"])
 
         def onehot_response(a, l):
-                    # unchanged if future/unknown response
-                    vec = np.zeros(l)
-                    if (a > 0):
-                        # 1 0 0 for class 1
-                        # 0 1 0 for class 2
-                        # 0 0 1 for class 3
-                        vec[a - 1] = 1
-                    elif (a < 0):
-                        # -1 -1 -1 for non response
-                        vec -= 1
-                    return vec
+            # unchanged if future/unknown response
+            vec = np.zeros(l)
+            if (a > 0):
+                # 1 0 0 for class 1
+                # 0 1 0 for class 2
+                # 0 0 1 for class 3
+                vec[a - 1] = 1
+            elif (a < 0):
+                # -1 -1 -1 for non response
+                vec -= 1
+            return vec
 
         for week in range(1, self.num_weeks_history):
             if (self.oneHotResponseFeatures):
                 for r in row[f"response_last_{week}"]:
-                    encoding = onehot_response(r, 3)
+                    if (self.only_rnr):
+                        length = 2
+                        encoding = onehot_response(min(r, 1), 2)
+                    elif (self.no_response_class):
+                        length = 4
+                        encoding = onehot_response(r, 4)
+                    else:
+                        length = 3
+                        encoding = onehot_response(r, 3)
                     X = np.append(X, encoding)
-                featureList += [f"response_last_{week}_q1"] * 3
-                featureList += [f"response_last_{week}_q2"] * 3
+                featureList += [f"response_last_{week}_q1"] * length
+                featureList += [f"response_last_{week}_q2"] * length
             else:
                 X = np.append(X, row[f"response_last_{week}"])
                 featureList += [f"response_last_{week}_q1", f"response_last_{week}_q2"]
-    
+
         for j in range(len(feats_to_enc)):
             for k in range(len(feats_to_enc[j])):
                 # encode the feature and add it to our feat vector
+                if (feats_to_enc[j][k] > ls[j]):
+                    print("ERROR!!!!!!")
                 bin_feat = _padded_binary(feats_to_enc[j][k],ls[j])
+                # print(len(bin_feat), feats_to_enc[j][k], elems[j], ls[j])
                 X = np.append(X, bin_feat)
                 featureList += [f"{elems[j]}_q{k+1}"] * len(bin_feat)
 
-
+        if self.cluster_by != None:
+            bin_feat = _padded_binary(row["cluster"], self.num_clusters)
+            X = np.append(X, bin_feat)
+            featureList.append("ClusterNum")
         if self.split_model_features:
             for idx, qid in enumerate(row["qcats"]):
                 bin_feat = _padded_binary(qid, 3)
                 X = np.append(X, bin_feat)
                 featureList += [f"q{idx+1}_cat"] * len(bin_feat)
-            
-        # responses are the labels
-        Y1 = np.array([])
-        # go in and split data into 2 rows if desired
-        if self.split_weekly_questions:
-            Y2 = np.array([])
-            # fill both labels
-            for i,r in enumerate(row["response"]):
-                if (self.regression):
-                    if (i == 0):
-                        Y1 = np.append(Y1, r)
-                    else:
-                        Y2 = np.append(Y2, r)
-                else:
-                    if (i == 0):
-                        Y1 = np.append(Y1, _onehot(r,4))
-                    else:
-                        Y2 = np.append(Y2, _onehot(r,4))
-            # now split rows
-            X1 = np.array([])
-            X2 = np.array([])
-            featureListFinal = []
-            for idx, name in enumerate(featureList):
-                if "q1" in name:
-                    X1 = np.append(X1, X[idx])
-                    featureListFinal.append(name)
-                elif "q2" in name:
-                    X2 = np.append(X2, X[idx])
-                # both rows get all non question specific features
-                else:
-                    X1 = np.append(X1, X[idx])
-                    X2 = np.append(X2, X[idx])
-                    featureListFinal.append(name)
-            featureList = featureListFinal
-        else:
+
+        # final states are labels
+        if (self.predictStates):
             X1 = X
             X2 = None
             Y2 = None
-            for i,r in enumerate(row["response"]):
-                if self.regression:
-                    Y1 = np.append(Y1, r)
-                else:
-                    Y1 = np.append(Y1, _onehot(r,4))
+
+            Y1 = np.array(row["finalState"])[0:5]
+        # responses are the labels
+        else:
+            Y1 = np.array([])
+            # go in and split data into 2 rows if desired
+            if self.split_weekly_questions:
+                Y2 = np.array([])
+                # fill both labels
+                for i,r in enumerate(row["response"]):
+                    if (self.regression):
+                        if (i == 0):
+                            Y1 = np.append(Y1, r)
+                        else:
+                            Y2 = np.append(Y2, r)
+                    elif (self.only_rnr):
+                        if (i == 0):
+                            Y1 = np.append(Y1, _onehot(min(1, r), 2))
+                        else:
+                            Y2 = np.append(Y2, _onehot(min(1, r), 2))
+                    else:
+                        if (i == 0):
+                            Y1 = np.append(Y1, _onehot(r,4))
+                        else:
+                            Y2 = np.append(Y2, _onehot(r,4))
+                # now split rows
+                X1 = np.array([])
+                X2 = np.array([])
+                featureListFinal = []
+                for idx, name in enumerate(featureList):
+                    if "q1" in name:
+                        X1 = np.append(X1, X[idx])
+                        featureListFinal.append(name)
+                    elif "q2" in name:
+                        X2 = np.append(X2, X[idx])
+                    # both rows get all non question specific features
+                    else:
+                        X1 = np.append(X1, X[idx])
+                        X2 = np.append(X2, X[idx])
+                        featureListFinal.append(name)
+                featureList = featureListFinal
+            else:
+                X1 = X
+                X2 = None
+                Y2 = None
+                for i,r in enumerate(row["response"]):
+                    if self.regression:
+                        Y1 = np.append(Y1, r)
+                    elif (self.only_rnr):
+                        Y1 = np.append(Y1, _onehot(min(1, r), 2))
+                    else:
+                        Y1 = np.append(Y1, _onehot(r,4))
         
         return X1, X2, Y1, Y2, featureList
     
@@ -611,13 +737,13 @@ class BehaviorData:
     @property
     def dimensions(self):
         # helper to get the x and y input dimensions
-        if (self.regression):
+        if (self.regression or self.only_rnr):
             lshape = self.labels.shape[1]
         elif (not self.no_response_class):
             if (self.split_weekly_questions):
-                lshape = self.labels.shape[1] - 2
-            else:
                 lshape = self.labels.shape[1] - 1
+            else:
+                lshape = self.labels.shape[1] - 2
         else:
             lshape = self.labels.shape[1]
 

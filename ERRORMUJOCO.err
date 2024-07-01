@@ -1,0 +1,105 @@
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7207737 ON n0180 CANCELLED AT 2024-06-30T12:25:20 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7207749 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207736 ON n0180 CANCELLED AT 2024-06-30T12:25:19 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7207739 ON n0180 CANCELLED AT 2024-06-30T12:25:19 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7207742 ON n0181 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** STEP 7207737.0 ON n0180 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** STEP 7207756.0 ON n0182 CANCELLED AT 2024-06-30T12:25:19 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7207740 ON n0180 CANCELLED AT 2024-06-30T12:25:19 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7207738 ON n0180 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** JOB 7207771 ON n0191 CANCELLED AT 2024-06-30T12:25:19 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** STEP 7207748.0 ON n0181 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** JOB 7207772 ON n0191 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** JOB 7207744 ON n0181 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207767 ON n0191 CANCELLED AT 2024-06-30T12:25:20 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7207756 ON n0182 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** JOB 7207775 ON n0191 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** STEP 7207752.0 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207743 ON n0181 CANCELLED AT 2024-06-30T12:25:20 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** STEP 7207759.0 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7207773 ON n0191 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** JOB 7207755 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207748 ON n0181 CANCELLED AT 2024-06-30T12:25:19 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7207750 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** STEP 7207747.0 ON n0181 CANCELLED AT 2024-06-30T12:25:19 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** STEP 7207741.0 ON n0181 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** JOB 7207753 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207747 ON n0181 CANCELLED AT 2024-06-30T12:25:19 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7207768 ON n0191 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** JOB 7207757 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207741 ON n0181 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207766 ON n0191 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** STEP 7207755.0 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207746 ON n0181 CANCELLED AT 2024-06-30T12:25:20 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7207765 ON n0191 CANCELLED AT 2024-06-30T12:25:19 ***
+srun: error: n0181: task 0: Terminated
+slurmstepd: error: *** STEP 7207750.0 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207759 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** STEP 7207745.0 ON n0181 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** JOB 7207774 ON n0191 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** JOB 7207760 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+srun: error: n0181: task 0: Terminated
+slurmstepd: error: *** JOB 7207758 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207745 ON n0181 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207752 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** STEP 7207773.0 ON n0191 CANCELLED AT 2024-06-30T12:25:20 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+srun: error: n0181: task 0: Terminated
+slurmstepd: error: *** STEP 7207757.0 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** STEP 7207768.0 ON n0191 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** STEP 7207753.0 ON n0182 CANCELLED AT 2024-06-30T12:25:21 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** STEP 7207754.0 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** STEP 7207765.0 ON n0191 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** STEP 7207758.0 ON n0182 CANCELLED AT 2024-06-30T12:25:21 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7207754 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207762 ON n0191 CANCELLED AT 2024-06-30T12:25:20 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** STEP 7207771.0 ON n0191 CANCELLED AT 2024-06-30T12:25:20 ***
+srun: error: n0182: task 0: Terminated
+slurmstepd: error: *** JOB 7207763 ON n0191 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** JOB 7207751 ON n0182 CANCELLED AT 2024-06-30T12:25:20 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** STEP 7207775.0 ON n0191 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** STEP 7207772.0 ON n0191 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207770 ON n0191 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** STEP 7207767.0 ON n0191 CANCELLED AT 2024-06-30T12:25:20 ***
+slurmstepd: error: *** JOB 7207769 ON n0191 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** JOB 7207764 ON n0191 CANCELLED AT 2024-06-30T12:25:19 ***
+slurmstepd: error: *** JOB 7207761 ON n0191 CANCELLED AT 2024-06-30T12:25:20 ***
