@@ -1,3 +1,5 @@
+# script to graph the accuracies of behavior modeling
+
 import numpy as np
 import matplotlib.pyplot as plt
 import os

@@ -1,3 +1,5 @@
+# code to create graphs for mujoco domains
+
 import numpy as np
 import matplotlib.pyplot as plt
 import os

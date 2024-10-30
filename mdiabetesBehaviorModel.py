@@ -1,8 +1,7 @@
+# script to run experiments making a predictive model of participant weekly behavior
 from experiment import Experiment
-from utils.behavior_data import BehaviorData
 import torch
 import numpy as np
-from utils.state_data import StateData
 import argparse
 import os
 
@@ -155,9 +154,6 @@ for seed in range(args.seeds):
     # torch.autograd.set_detect_anomaly(True)
     report = e.run()
 
-
-
-
     if not args.save:
         continue
     individual_test_scores, labels = e.report_scores_individual_test()
@@ -170,9 +166,9 @@ for seed in range(args.seeds):
     if args.cluster_by != None:
         finalDir = f"{finalDir}/cluster{args.cluster_by}"
     if epochs > 900:
-        dire = f"/home/abutler9/ailab/mdiabetes-behavior-modeling/experiment_output_long/{finalDir}/"
+        dire = f"./experiment_output_long/{finalDir}/"
     else:
-        dire = f"/home/abutler9/ailab/mdiabetes-behavior-modeling/experiment_output/{finalDir}/"
+        dire = f"./experiment_output/{finalDir}/"
 
     if (not os.path.exists(dire)):
         os.makedirs(dire)
