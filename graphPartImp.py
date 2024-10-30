@@ -6,10 +6,8 @@ import os
 env = "Diabetes"
 seedmin, seedmax = 1, 40
 hiddens = [1]
-# statepreds = ['lstm', '']
-statepreds = ['lstm']
-# variables = ['rewards']
-variables = ['statepredloss']
+statepreds = ['', 'lstm']
+variables = ['totalimp']
 maxEpoch = 200
 qlr = 3e-5
 hsize = 128
@@ -18,7 +16,7 @@ eqs = ["True"]
 
 np.random.seed(0)
 
-colors = plt.cm.rainbow(np.linspace(0, 1, 5))
+colors = plt.cm.rainbow(np.linspace(0, 1, len(hiddens) * len(statepreds)))
 for eq in eqs:
     for v, variable in enumerate(variables):
         for s, statepred in enumerate(statepreds):
@@ -26,18 +24,26 @@ for eq in eqs:
             folder = "./saved_mdiabetes_rl"
             for i, hidden in enumerate(hiddens):
                 if statepred == '':
-                    folder = f"{folder}/{variable}"
+                    folder = f"{folder}/trajlog"
                 else:
-                    folder = f"{folder}/{statepred}/{variable}"
+                    folder = f"{folder}/{statepred}/trajlog"
                 for seed in range(seedmin, seedmax+1):
-                    fname = f"{folder}/{seed}H{hsize}LR{qlr}EQ{eq}.csv"
+                    fname = f"{folder}/{variable}{seed}H{hsize}LR{qlr}EQ{eq}.csv"
                     if not os.path.isfile(fname):
                         print(f"NOT FOUND: {fname}")
                         continue
                     if temp is None:
-                        temp = np.expand_dims(np.loadtxt(fname, delimiter="\n"), axis=-1)[0:maxEpoch]
+                        temp = np.expand_dims(np.loadtxt(fname, delimiter="\n"), axis=-1)
+                        if len(temp) > 200:
+                            temp = temp[199:199+maxEpoch]
+                        else:
+                            temp = temp[:maxEpoch]
                     else:
-                        tempin = np.expand_dims(np.loadtxt(fname, delimiter="\n"), axis=-1)[0:maxEpoch]
+                        tempin = np.expand_dims(np.loadtxt(fname, delimiter="\n"), axis=-1)
+                        if len(tempin) > 200:
+                            tempin = tempin[199:199+maxEpoch]
+                        else:
+                            tempin = tempin[:maxEpoch]
                         if tempin.shape[0] != temp.shape[0]:
                             print(f"{fname} unused")
                             continue
@@ -52,21 +58,19 @@ for eq in eqs:
                 if statepred == '':
                     label = f"RRD"
                 else:
-                    label = f"SPER2D"
-                print(f"{env}- {label}\n\t{testmeans[-1]:.2f}")
+                    label = f"SPER2D (LSTM)"
+                print(f"{env}- {label}\n\t{(testmeans[-1] * 100):.2f}±{(stddev[-1] * 100/np.sqrt(40)):.2f}")
                 plt.plot(x, testmeans, color=colors[s*len(hiddens) + i], label=label)
                 plt.fill_between(x, testmins, testmaxes, color=colors[s*len(hiddens) + i], alpha=0.1)
 
     plt.title(f"Diabetes Messaging", fontsize=22)
-    if variable == 'rewards':
-        plt.ylabel("Episodic Rewards", fontsize=20)
-    else:
-        plt.ylabel("Loss (MSE)", fontsize=20)
-    plt.xlabel("Timesteps (millions)", fontsize=20)
+    plt.ylabel("% of Participants Improved", fontsize=20)
+    plt.xlabel("Environmental Steps (millions)", fontsize=20)
+    plt.ylim(bottom=0)
     plt.legend(fontsize=18, loc="lower right")
     plt.tight_layout()
-    print(f"./MJGraphs/MdbRlEQ{eq}{variable}.png")
-    plt.savefig(f"./MJGraphs/MdbRlEQ{eq}{variable}.png")
+    print(f"./MJGraphs/{variable}EQ{eq}form.png")
+    plt.savefig(f"./MJGraphs/{variable}EQ{eq}form.png")
     plt.clf()
                 
                 

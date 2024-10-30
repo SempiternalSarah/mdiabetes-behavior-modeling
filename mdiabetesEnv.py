@@ -28,12 +28,11 @@ def _onehot_response(a, l):
         vec -= 1
     return vec
 
-maxMsgId = 57
-maxQId = 32
-maxSId = 17
+
 
 class DiabetesEnv():
-    def __init__(self, startingStates, eqmodel, rewardStateDecay, cuda = False, numHist = 3):
+    def __init__(self, startingStates, eqmodel, rewardStateDecay, endQPred, cuda = False, numHist = 3):
+        self.endQPred = endQPred
         self.eqmodel = eqmodel
         self.startingStates = np.stack(startingStates, axis=0)
         self.rewardStateDecay = rewardStateDecay
@@ -44,18 +43,18 @@ class DiabetesEnv():
             self.model = self.model.cuda()
         self.model.eval()
         self.currentStartedState = None
+        self.maxMsgId = 57
+        self.maxQId = 32
+        self.maxSId = 17
+
+        self.perCategoryRewards = np.zeros([self.maxSId], dtype=float)
 
         with open("detailed_question_state_element_map.json", 'r') as fp:
             qmap = json.loads(fp.read())
             qCatDict = {}
             for key in qmap.keys():
                 for elem in qmap[key]:
-                    if int(key) < 9:
-                        qCatDict[elem] = 0
-                    elif int(key) < 13:
-                        qCatDict[elem] = 1
-                    else:
-                        qCatDict[elem] = 2
+                    qCatDict[elem] = int(key)
             self.qmap = qCatDict
         self.qmap[0] = 0
         mmap = np.loadtxt("detailed_message_map.csv", delimiter=',', dtype=int)
@@ -77,6 +76,7 @@ class DiabetesEnv():
             toReturn = self.startingStates[mask]
         self.currentStartedState = toReturn
         self.rewardState = toReturn
+        self.perCategoryRewards = np.zeros([self.maxSId], dtype=float)
         self.lastQs = [np.zeros([2], dtype=int) for x in range(self.numHist)]
         self.lastMs = [np.zeros([2], dtype=int) for x in range(self.numHist)]
         self.lastRs = [np.zeros([2], dtype=int) for x in range(self.numHist - 1)]
@@ -85,14 +85,14 @@ class DiabetesEnv():
 
     def step(self, action):
         action = (action + 1) / 2
-        msgs = np.array(action[0:2] * maxMsgId, dtype=float)
+        msgs = np.array(action[0:2] *self.maxMsgId, dtype=float)
         msgs = np.ceil(msgs).astype(int)
-        if msgs.min() < 0 or msgs.max() > maxMsgId:
+        if msgs.min() < 0 or msgs.max() >self.maxMsgId:
             print("MSG OUT OF BOUNDS!!!!")
             print(action)
-        qs = np.array(action[2:4] * maxQId, dtype=float)
+        qs = np.array(action[2:4] *self.maxQId, dtype=float)
         qs = np.ceil(qs).astype(int)
-        if qs.min() < 0 or qs.max() > maxQId:
+        if qs.min() < 0 or qs.max() >self.maxQId:
             print("Q OUT OF BOUNDS!!!!")
             print(action)
         self.lastMs = [msgs] + self.lastMs
@@ -100,8 +100,8 @@ class DiabetesEnv():
         rows = self.encode_new_rows()
         observation = np.zeros_like(self.currentStartedState)
         knowns = np.zeros_like(self.currentStartedState, dtype=bool)
-        observation[maxSId - 1:] = self.currentStartedState[maxSId - 1:]
-        knowns[maxSId - 1:] = 1
+        observation[self.maxSId - 1:] = self.currentStartedState[self.maxSId - 1:]
+        knowns[self.maxSId - 1:] = 1
         with torch.no_grad():
             anses = []
             for idx, row in enumerate(rows):
@@ -110,32 +110,51 @@ class DiabetesEnv():
                     row = row.cuda()
                 answer, temp = self.model(row)
                 answer = torch.argmax(answer)
-                anses.append(answer.numpy())
-                observation[self.qmap[self.lastQs[0][idx]]] = answer
-                knowns[self.qmap[self.lastQs[0][idx]]] = answer
+                if np.random.rand() > 0.5:
+                    anses.append(answer.numpy())
+                    knowns[self.qmap[self.lastQs[0][idx]]] = True
+                    # penalize choosing the same category twice
+                    if observation[self.qmap[self.lastQs[0][idx]]] != 0:
+                        observation[self.qmap[self.lastQs[0][idx]]] = min(observation[self.qmap[self.lastQs[0][idx]]], answer)
+                    else:
+                        observation[self.qmap[self.lastQs[0][idx]]] = answer
+                else:
+                    anses.append(-1)
+                # print(observation)
+                # print(knowns)
             self.lastRs = [np.array(anses)] + self.lastRs
         self.numEpochs += 1
         self.rewardState[~knowns] = self.rewardState[~knowns] * self.rewardStateDecay
+
         if self.numEpochs > 24:
             feats = self.encode_final_statepred_feats()
             with torch.no_grad():
                 eqpred = self.eqmodel(feats).numpy()
-            reward = np.sum(eqpred - self.currentStartedState[:maxSId])
+            predictedImprovement = eqpred
+            if self.endQPred:
+                self.perCategoryRewards = predictedImprovement
+            else:
+                self.perCategoryRewards[knowns[:self.maxSId]] += observation[:self.maxSId][knowns[:self.maxSId]] - self.rewardState[:self.maxSId][knowns[:self.maxSId]] 
+            reward = np.sum(self.perCategoryRewards)
         else:
+            if not self.endQPred:
+                self.perCategoryRewards[knowns[:self.maxSId]] += observation[:self.maxSId][knowns[:self.maxSId]] - self.rewardState[:self.maxSId][knowns[:self.maxSId]] 
             reward = 0
+            predictedImprovement = None
         self.rewardState[knowns] = observation[knowns]
-        return observation, knowns, reward, self.numEpochs > 24
+
+        return observation, knowns, reward, self.numEpochs > 24, predictedImprovement
         
     def encode_final_statepred_feats(self):
         feats = []
         for x in range(len(self.lastRs) - 1, self.numHist, -1):
             toReturn = np.array(self.currentStartedState)
             for qid in self.lastQs[x]:
-                toReturn = np.append(toReturn, _padded_binary(qid, maxQId))
+                toReturn = np.append(_padded_binary(qid,self.maxQId), toReturn)
             for mid in self.lastMs[x]:
-                toReturn = np.append(toReturn, _padded_binary(mid, maxMsgId))
+                toReturn = np.append(_padded_binary(mid,self.maxMsgId), toReturn)
             for res in self.lastRs[x]:
-                toReturn = np.append(toReturn, _onehot_response(res, 3))
+                toReturn = np.append(_onehot_response(res, 3), toReturn)
             feats.append(toReturn)
         feats = np.stack(feats)
         feats = torch.tensor(feats).float()
@@ -146,12 +165,12 @@ class DiabetesEnv():
         for y in [0, 1]:
             toReturn[y] = self.currentStartedState
             for x in range(self.numHist - 1):
-                toReturn[y] = np.append(toReturn[y], _onehot_response(self.lastRs[x][y], 3))
+                toReturn[y] = np.append(_onehot_response(self.lastRs[x][y], 3), toReturn[y])
             for x in range(self.numHist):
-                toReturn[y] = np.append(toReturn[y], _padded_binary(self.mmap[self.lastMs[x][y]], maxSId))
-                toReturn[y] = np.append(toReturn[y], _padded_binary(self.qmap[self.lastQs[x][y]], maxSId))
-                toReturn[y] = np.append(toReturn[y], _padded_binary(self.lastMs[x][y], maxMsgId))
-                toReturn[y] = np.append(toReturn[y], _padded_binary(self.lastQs[x][y], maxQId))
+                toReturn[y] = np.append(toReturn[y], _padded_binary(self.mmap[self.lastMs[x][y]],self.maxSId))
+                toReturn[y] = np.append(toReturn[y], _padded_binary(self.qmap[self.lastQs[x][y]],self.maxSId))
+                toReturn[y] = np.append(toReturn[y], _padded_binary(self.lastMs[x][y],self.maxMsgId))
+                toReturn[y] = np.append(toReturn[y], _padded_binary(self.lastQs[x][y],self.maxQId))
         return toReturn
 
     

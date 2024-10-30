@@ -111,7 +111,6 @@ class Trajectory:
         return feats, labels, knowns
 
 
-
 class Buffer:
     def __init__(self, numElements):
         self.n = numElements
@@ -633,7 +632,6 @@ for step in range(int(args.numSteps)):
             ob2Samp = np.array(samples['nextobs'])
             rewSamp = np.array(samples['rewards'])
             knownSamp = np.array(samples['knowns'])
-            known2Samp = np.array(samples['nextknowns'])
             # print(obSamp.shape, actSamp.shape, rewSamp.shape, knownSamp.shape)
             feats = torch.tensor(np.concatenate((obSamp, actSamp, obSamp - ob2Samp), axis=-1)).float()
             if args.cuda:
@@ -674,9 +672,6 @@ for step in range(int(args.numSteps)):
             donesSamp = torch.tensor([samp['dones'] for samp in samples]).float().unsqueeze(-1)
             if args.cuda:
                 donesSamp = donesSamp.cuda()
-            knownSamp = np.array([samp['knowns'] for samp in samples])
-            # rewSamp = np.array([samp['rewards'] for samp in samples])
-            nextKnownSamp = np.array([samp['nextknowns'] for samp in samples])
             # print(rHat.shape, donesSamp.shape)
             # rHat = torch.tensor(rewSamp).float().unsqueeze(-1)
             # print(nextFeats.shape)

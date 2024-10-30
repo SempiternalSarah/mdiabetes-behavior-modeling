@@ -7,7 +7,8 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.distributions import Normal
+from torch.distributions import Normal, Independent
+from models.decision_transformer import DecisionTransformer
 import os
 import time
 
@@ -33,15 +34,15 @@ parser.add_argument("--train_batches", type=int, default=100, help="no. batches 
 parser.add_argument("--envSteps", type=int, default=100, help="no. environment steps per timestep")
 parser.add_argument("--consecHidden", type=int, default=1, help="no. consecutive timesteps to hide information (e.g. hide an ant limb for 10 environmental steps)")
 parser.add_argument("--env", type=str, default="HalfCheetah-v2", help="MuJoCo environment")
-parser.add_argument("--logging", type=toBool, default=False, help="Logs progress to file")
-parser.add_argument("--cuda", type=toBool, default=False, help="Use GPU for training")
-parser.add_argument("--statepred", type=toBool, default=False, help="Use explicit state prediction")
-parser.add_argument("--statefill", type=toBool, default=True, help="Fill unobserved state components with previously observed values")
+parser.add_argument("--logging", type=toBool, default=False)
+parser.add_argument("--cuda", type=toBool, default=False)
+parser.add_argument("--statepred", type=toBool, default=False)
+parser.add_argument("--statefill", type=toBool, default=True)
 parser.add_argument("--contextSAC", type=toBool, default=False)
-parser.add_argument("--statemodel", type=str, default="lstm", help="Type of model for predicting states")
+parser.add_argument("--statemodel", type=str, default="lstm")
 parser.add_argument("--numBreaks", type=int, default=4, help="Minibatches for state pred training")
 parser.add_argument("--stateTrainMult", type=int, default=1, help="Multiplier for state learning epochs")
-parser.add_argument("--hiddenSizeLSTM", type=int, default=64, help="Hidden size for LSTM network")
+parser.add_argument("--hiddenSizeLSTM", type=int, default=64)
 parser.add_argument("--policyResetStep", type=int, default=-1, help="No. algorithmic steps at which to reset the policy")
 
 
@@ -55,24 +56,32 @@ if args.cuda:
 torch.random.manual_seed(args.seed)
 np.random.seed(args.seed)
 
-# trajectory class - helper for lessons buffer
+# print(args.actlr, args.qlr, args.bufferSize, args.startLearning
+
+
 class Trajectory:
     def __init__(self, observations, actions, rewards, dones, knownses):
+        # print(observations[0])
         self.obs = np.stack(observations, axis=0)
+        # print(self.obs.max(), self.obs.min()).
         self.actions = np.stack(actions, axis=0)
         self.dones = np.stack(dones, axis=0)
         self.knownses = np.stack(knownses, axis=0)
         self.rewards = np.stack(rewards, axis=0)
-
-        # validate trajectory
+        # print("_________IN BUFFER________________", self.obs[0], self.actions[0], self.obs[1], self.rewards[0], sep="\n")
         if len(self.obs) != len(self.actions) + 1 != len(self.dones) != len(self.knownses) != len(self.rewards) + 1:
             print("ERROR IN BUFFER STORAGE")
-
+        # print(self.dones.sum())
+        # rewardSum = self.rewards.sum()
+        # self.rewards = np.zeros_like(self.rewards)
+        # self.rewards[-1] = rewardSum
+        # print(self.rewards)
+        # print(self.rewards)
+        # print(self.obs.shape, self.actions.shape, self.rewards.shape)
         self.length = len(actions)
 
-    # return specific timestep of trajectory
     def getElement(self, idx):
-
+        # print(idx, self.length)
         return {
             'obs':self.obs[idx], 
             'actions': self.actions[idx], 
@@ -82,7 +91,6 @@ class Trajectory:
             'nextknowns': self.knownses[idx + 1], 
             'rewards': self.rewards[idx]}
     
-    # sample SIZE entries from trajectory
     def sample(self, size):
         idxs = np.random.choice(self.length, size, replace = size>self.length)
         # if size > self.length:
@@ -99,7 +107,6 @@ class Trajectory:
             'rewards': [np.mean(self.rewards)]}
             # 'rewards': self.rewards}
     
-    # retrieve features for state prediction task
     def retrieveStateFeatures(self, idx):
         mindx = max(idx - args.context, 0)
         obs = self.obs[mindx:idx + 1]
@@ -109,7 +116,8 @@ class Trajectory:
         knowns = self.knownses[idx + 1]
         return feats, labels, knowns
 
-# lessons buffer class
+
+
 class Buffer:
     def __init__(self, numElements):
         self.n = numElements
@@ -120,7 +128,6 @@ class Buffer:
         self.splits = []
 
     def addElement(self, obs, act, rew, dones, knownses):
-        # keep track of min/max observation
         tempObsMax = np.max(obs, axis=0)
         tempObsMin = np.min(obs, axis=0)
         if (self.count == 0):
@@ -134,7 +141,6 @@ class Buffer:
         self.els.append(e)
         self.count += e.length
 
-        # keep track of divisions between different transitions in buffer
         if len(self.splits) > 0:
             self.splits.append(self.splits[-1] + len(act))
         else: 
@@ -146,11 +152,10 @@ class Buffer:
             self.splits = list(map(lambda x: x - temp.length, self.splits))
 
     def sample(self, size):
-        idxs = np.random.choice(self.count, size, replace = size > self.count)
+        idxs = np.random.choice(self.count, size, replace = size>self.count)
         idxs = sorted(idxs)
         i = 0
         toReturn = []
-        # retrieve chosen indexes from corresponding trajectories
         for idx in idxs:
             while (idx >= self.splits[i]):
                 i += 1
@@ -166,21 +171,24 @@ class Buffer:
     def sampleSubSeqs(self, subLen, numSubs):
         idxs = np.random.choice(len(self.els), numSubs, replace = numSubs>len(self.els))
         toReturn = {}
-        # recombine samples into their own vectors
+        # print(idxs, "!!")
         for i in idxs:
             temp = self.els[i].sample(subLen)
             for key in temp.keys():
                 if key in toReturn:
+                    # print("HAS", i)
+                    # print(toReturn[key].shape)
                     toReturn[key].append(temp[key])
                 else:
+                    # print("HASNOT", i)
                     toReturn[key] = [temp[key]]
+                    # print(toReturn[key])
         return toReturn
     
     def sampleForStatePred(self, size):
         idxs = np.random.choice(self.count, size, replace = size>self.count)
         idxs = sorted(idxs)
         i = 0
-
         returnFeats, returnLabs, returnKnowns = [], [], []
         for idx in idxs:
             while (idx >= self.splits[i]):
@@ -191,16 +199,11 @@ class Buffer:
                 offset = self.splits[i - 1]
             if (idx - offset) < 0:
                 print("ERRORR!!!!!!! Buffer index offset wrong")
-
             tfeat, tlab, tknown = self.els[i].retrieveStateFeatures(idx - offset)
-
-            # combine individually returned values into vectors for each
             returnFeats.append(torch.tensor(tfeat))
             returnLabs.append(tlab)
             returnKnowns.append(tknown)
-
         lengths = [len(feat) for feat in returnFeats]
-
         # shape is (sequence, batch, features)
         return torch.nn.utils.rnn.pad_sequence(returnFeats).float(), np.stack(returnLabs, axis=0), np.stack(returnKnowns, axis=0), lengths
 
@@ -229,8 +232,6 @@ class StateLSTMNetwork(nn.Module):
         output = self.attnlayer(output, output, output)[0][-1]
         output = torch.relu(output)
         output = self.outlayer(output)
-
-        # clamp prediction to previously observed range (UNUSED)
         # if not mins is None:
         #     mins = torch.tensor(mins)
         #     maxes = torch.tensor(maxes)
@@ -240,8 +241,6 @@ class StateLSTMNetwork(nn.Module):
         #     output = torch.clamp(output, mins, maxes)
         return output
     
-# state predictor using only linear layers
-# UNUSED
 class StateNNNetwork(nn.Module):
     def __init__(self, envs, hidden_size=256):
         super().__init__()
@@ -262,7 +261,7 @@ class StateNNNetwork(nn.Module):
         output = self.outlayer(output)
         return output
 
-# Q value network for SAC
+
 class SoftQNetwork(nn.Module):
     def __init__(self, envs):
         super().__init__()
@@ -283,7 +282,7 @@ class SoftQNetwork(nn.Module):
         q_vals = self.fc_q(x)
         return q_vals
 
-# actor network for SAC
+
 class Actor(nn.Module):
     def __init__(self, envs: gym.Env):
         super().__init__()
@@ -340,10 +339,10 @@ class Actor(nn.Module):
         # Enforcing Action Bound
         logprob -= torch.log(self.action_scale * (1 - action.pow(2)) + epsilon)
         logprob = logprob.sum(1, keepdim=True)
-
+        # print(samp.shape, action.shape, logprob.shape)
+        # exit()
         return action, logdev, logprob
 
-# reward redistribution model
 class RRDModel(nn.Module):
     def __init__(self, envs):
         super().__init__()
@@ -361,9 +360,6 @@ class RRDModel(nn.Module):
         out = self.fc3(out)
         return out
     
-
-# defines components of each robot
-# full components (subarrays) are what is hudden
 
 antParts = [[0, 1, 2, 3, 4, 13, 14, 15, 16, 17, 18],
     [5, 6, 19, 20],
@@ -403,7 +399,6 @@ hopperParts = [[0, 1, 5, 6, 7],
                [3, 9],
                [4, 10]]
 
-# easily remap versions for debugging
 partsLookup = {"Ant-v2": antParts,
                "Ant-v3": antParts,
                "HalfCheetah-v2": cheetahParts,
@@ -411,12 +406,9 @@ partsLookup = {"Ant-v2": antParts,
                "Hopper-v2": hopperParts,
                "Walker2d-v2": walkerParts}
 
-# returns filtered observation based on how much information should be hidden
-# this accomplishes the modification to the MuJoCo Gym environments 
 def obsFilter(observation, numHidden, lastKnown, leftTilRandom):
     parts = partsLookup[args.env]
     if (numHidden > 0):
-        # NEW parts need to be hidden
         if leftTilRandom <= 1:
             hiddenParts = np.random.choice(len(parts), numHidden, replace=False)
             known = np.ones_like(observation)
@@ -426,19 +418,16 @@ def obsFilter(observation, numHidden, lastKnown, leftTilRandom):
                 observation[parts[part]] = 0
                 known[parts[part]] = 0
         else:
-            # hide the same parts as the last timestep (UNUSED)
             known = np.copy(lastKnown)
             observation = observation * known
             leftReturn = leftTilRandom - 1
     
+
         return observation, known, leftReturn
     # default
     return observation, np.ones_like(observation), leftTilRandom
 
-# return agent's state belief based on the previous state, current action, and trajectory before that
-# will be combined with observable components to yield final predicted observation
 def getStateBelief(observations, knowns, acts=None, statepred = None, mins=None, maxes=None):
-    # explicit prediction
     if args.statepred:
         obsfeat = torch.tensor(np.concatenate([observations, acts], axis=-1)).float()
         obsfeat = obsfeat.unsqueeze_(1)
@@ -450,26 +439,18 @@ def getStateBelief(observations, knowns, acts=None, statepred = None, mins=None,
             toReturn = toReturn.cpu().detach().numpy()
         else:
             toReturn = toReturn.detach().numpy()
-        # state predictive model output is actually DIFFERENCE between observations
-        # add to previous observation
         return toReturn + observations[-1]
     
-    # no explicit permission - assume values unchanged
     return observations[-1]
 
-# set seeds for reproducibility 
+
 random.seed(args.seed)
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
-
-# set up default (training) environment, and one for testing
-# seed them with the correct value
 env = gym.make(args.env)
 env.seed(args.seed)
 testenv = gym.make(args.env)
 testenv.seed(args.seed)
-
-# initialize networks
 actor = Actor(env)
 qf1 = SoftQNetwork(env)
 qf2 = SoftQNetwork(env)
@@ -484,6 +465,35 @@ if (args.statepred):
         # exit()
         statepred = StateLSTMNetwork(env)
         statepred_target = StateLSTMNetwork(env)
+    elif args.statemodel == "dt":
+        statepred = DecisionTransformer(
+            state_dim=env.observation_space.shape[0],
+            act_dim=env.action_space.shape[0],
+            max_length=args.context,
+            max_ep_len=1000,
+            hidden_size=128,
+            n_layer=3,
+            n_head=1,
+            n_inner=4*128,
+            activation_function='relu',
+            n_positions=1024,
+            resid_pdrop=0.1,
+            attn_pdrop=0.1,
+        )
+        statepred_target = DecisionTransformer(
+            state_dim=env.observation_space.shape[0],
+            act_dim=env.action_space.shape[0],
+            max_length=args.context,
+            max_ep_len=1000,
+            hidden_size=128,
+            n_layer=3,
+            n_head=1,
+            n_inner=4*128,
+            activation_function='relu',
+            n_positions=1024,
+            resid_pdrop=0.1,
+            attn_pdrop=0.1,
+        )
 else:
     statepred = None
     statepred_target = None
@@ -501,8 +511,6 @@ if args.cuda:
 for p1, p2 in zip(qf1_target.parameters(), qf2_target.parameters()):
     p1.requires_grad = False
     p2.requires_grad = False
-
-# initialize alpha optimization, if used
 if (args.alpha_lr > 0):
     logalpha = torch.tensor(0).float()
     if (args.cuda):
@@ -513,19 +521,16 @@ if (args.alpha_lr > 0):
 else: 
     alpha = args.alpha
 
-# copy values to target networks
+
 qf1_target.load_state_dict(qf1.state_dict())
 qf2_target.load_state_dict(qf2.state_dict())
 
-# initialize optimizers
 q_opt = optim.Adam(list(qf1.parameters()) + list(qf2.parameters()), lr=args.qlr)
 act_opt = optim.Adam(list(actor.parameters()), lr=args.actlr)
 rrd_opt = optim.Adam(list(rrder.parameters()), lr=3e-4)
 if args.statepred:
     stateopt = optim.Adam(list(statepred.parameters()), lr=args.statelr)
 
-
-# method to evaluate current policy
 def evaluatePolicy(numRollouts=10):
     totalReward = 0
     totalLoss = 0
@@ -555,21 +560,22 @@ def evaluatePolicy(numRollouts=10):
             actbuff.append(testaction)
             nextObsPred = getStateBelief(obsbuff[-start:], knowns, actbuff[-start:], statepred, mins=buff.minStateVals, maxes=buff.maxStateVals)
             nextobs, knowns, hiddenLeft = obsFilter(nextobsUn, args.numHidden, knowns, hiddenLeft)
+            # print(nextobs)
+            # print(nextobsUn)
             testobs = (knowns * nextobs) + ((1 - knowns) * (nextObsPred))
+            # print(testobs)
             testObsIdxs = (1 - knowns) != 0
-
-            # don't track loss for timesteps where num hidden is 0 (first observation)
+            # don't track timesteps where num hidden is 0 (first observation)
             if testObsIdxs.sum() > 0:
+                # print(nextobsUn[testObsIdxs])
                 testLoss = np.mean(np.square(nextObsPred[testObsIdxs] - nextobsUn[testObsIdxs]))
                 episodicLoss += testLoss
             obsbuff.append(testobs)
             episodicReward += testreward
-
         totalLoss += episodicLoss / len(actbuff)
         totalReward += episodicReward
     return totalReward / numRollouts, totalLoss / numRollouts
 
-# setup directories to save data over training
 if args.statepred:
     statemodel = args.statemodel
 elif args.statefill:
@@ -581,8 +587,6 @@ if args.contextSAC:
 else:
     sacstr = "NoContext"
 foldern = f"./saved_mujoco/{args.env}/{sacstr}/{statemodel}/"
-
-# try to avoid collisions when queueing up many experiments to HPC
 if (args.logging and args.seed == 1):
     if not os.path.exists(f"{foldern}rewards"):
         os.makedirs(f"{foldern}rewards")
@@ -602,19 +606,24 @@ if (args.logging and args.seed == 1):
         os.makedirs(f"{foldern}staterange")
 
 
-# keep track of values to report over the course of training
+
+
+
 rewardSet = []
 rewardList = []
+maxStateList = []
+minStateList = []
 testStateLossList = []
+testStateLossUnreducedList = []
 qflosslist = []
 actlosslist = []
 rrdlosslist = []
 statelosslist = []
+stateLossUnreducedList = []
 
-# initialize trajectory buffer
 buff = Buffer(args.bufferSize)
 
-# initialize values for environmental sampling
+# init
 observation = env.reset()
 obs = [observation]
 acts = []
@@ -625,17 +634,14 @@ rewards = []
 numSteps = 0
 hiddenLeft = 0
 
+print(observation.shape)
+
 actloss = None
 qfloss = None
 
-
-# keep track of runtime
 starttime = time.time()
 
-# iterations of complete algorithm
 for step in range(int(args.numSteps)):
-    # reset policy to re-train
-    # UNUSED
     if step == args.policyResetStep:
         qf1 = SoftQNetwork(env)
         qf2 = SoftQNetwork(env)
@@ -668,7 +674,6 @@ for step in range(int(args.numSteps)):
         q_opt = optim.Adam(list(qf1.parameters()) + list(qf2.parameters()), lr=args.qlr)
         act_opt = optim.Adam(list(actor.parameters()), lr=args.actlr)
 
-    # sample steps from environment
     for envStep in range(args.envSteps):
         with torch.no_grad():
             start = min(args.context, len(obs))
@@ -688,32 +693,27 @@ for step in range(int(args.numSteps)):
                 action = action.detach().numpy().squeeze()
             nextObs, reward, done, info = env.step(action)
             acts.append(action)
-            # get predicted state
             nextObsPred = getStateBelief(obs[-start:], knowns, acts[-start:], statepred_target, mins=buff.minStateVals, maxes=buff.maxStateVals)
-            # get actually observed state
+
             nextObs, knowns, hiddenLeft = obsFilter(nextObs, args.numHidden, knowns, hiddenLeft)
-            # combine predictions with known values, treat as observation going forward
+            # print(nextObsPred.shape, nextObs.shape)
             observation = (knowns * nextObs) + ((1 - knowns) * (nextObsPred))
+            if (len(rewards) == 0):
+                None
+                # print("__________SAMPLED_________", observation, action, nextObs, reward, sep="\n")
+            # observation, reward, terminated, truncated, info = env.step(env.action_space.sample())
             knownses.append(knowns)
             rewards.append(reward)
             obs.append(observation)
-
-            # trajectory is finished
             if done:
-                # if ended due to time limit - do not treat as "done" for SAC
                 if (info.get('TimeLimit.truncated', False)):
                     dones.append(0)
                 else:
-                    # terminated due to the state, not just truncated
+                    # print("Done!", len(acts))
                     dones.append(1)
-
-                # add completed trajectory to buffer
                 buff.addElement(obs, acts, rewards, dones, knownses)
-
-                # keep track of environmental steps taken
                 numSteps += len(acts)
-
-                # reset environment and variables 
+                # init
                 observation = env.reset()
                 obs = [observation]
                 acts = []
@@ -724,7 +724,6 @@ for step in range(int(args.numSteps)):
                 hiddenLeft = 0
             else:
                 dones.append(0)
-    # train state predictive model if we've sampled enough transitions
     if (numSteps) >= args.startLearningState:
         # train state pred network
         if args.statepred:
@@ -738,32 +737,36 @@ for step in range(int(args.numSteps)):
                     feats = feats.cuda()
                     labels = labels.cuda()
                     mask = mask.cuda()
-
                 preds = statepred(feats, buff.minStateVals, buff.maxStateVals)
+                # preds = preds[mask]
+                # labels = labels[mask]
+                # print(preds.shape, labels.shape)
                 stateLossUnreduced = (preds - labels)**2
-
-                # compute loss for observed components ONLY!! crucial!
                 statePredLoss = (stateLossUnreduced * mask).mean()
                 if args.cuda:
                     stateLossUnreduced = stateLossUnreduced.cpu()
                     mask = mask.cpu()
                 stateLossUnreduced = stateLossUnreduced.detach().numpy()
                 mask = mask.detach().numpy()
-
-                # keep track of per-component loss for analysis
                 stateLossUnreduced = np.average(stateLossUnreduced, axis=0, weights=mask)
-
+                # print(statePredLoss.max().item())
+                # statePredLoss = statePredLoss * mask
                 stateopt.zero_grad()
                 statePredLoss.backward()
                 nn.utils.clip_grad_value_(statepred.parameters(), 1.0)
                 stateopt.step()
-
     if (numSteps) >= args.startLearning:
         for trainstep in range(args.train_batches):
             # 1 update here for every environment step
             # train RRD network
+            # 'obs':self.obs[idx], 
+            # 'actions': self.actions[idx], 
+            # 'nextobs': self.obs[idx + 1], 
+            # 'dones': self.dones[idx + 1], 
+            # 'knowns': self.knownses[idx], 
+            # 'nextknowns': self.knownses[idx + 1], 
+            # 'rewards': self.rewards[idx]
             samples = buff.sampleSubSeqs(64, 4)
-            # transform samples to np arrays to prep for training
             obSamp = np.array(samples['obs'])
             actSamp = np.array(samples['actions'])
             if len(actSamp.shape) < len(obSamp.shape):
@@ -771,26 +774,24 @@ for step in range(int(args.numSteps)):
             ob2Samp = np.array(samples['nextobs'])
             rewSamp = np.array(samples['rewards'])
             knownSamp = np.array(samples['knowns'])
-
-            # construct features for RRD network
+            # print(obSamp.shape, actSamp.shape, rewSamp.shape, knownSamp.shape)
             feats = torch.tensor(np.concatenate((obSamp, actSamp, obSamp - ob2Samp), axis=-1)).float()
             if args.cuda:
                 feats = feats.cuda()
             
-            # compute predicted rewards
             rHat = rrder(feats).squeeze(-1)
 
-            # calculate per-trajectory sums
             episodicSums = torch.mean(rHat, dim=-1, keepdim=True)
-
-            # labels are per-trajectory totals averaged out to each transition (see RRD paper)
-            # stochastically strikes a balance between least-squares and uniform reward decomp
+            # print(episodicSums.shape, rewSamp.shape, feats.shape, rHat.shape)
+            # print(rewSamp)
+            # print(episodicSums.shape, rewSamp.shape)
             labels = torch.tensor(rewSamp).float()
             if args.cuda:
                 labels = labels.cuda()
             rrdloss = F.mse_loss(episodicSums, labels)
-
-            # apply gradient descent
+            # print(rewSamp.shape, episodicSums.shape, rHat.shape)
+            # if (step % 100) == 0:
+            #     print(rrdloss.item())
             rrd_opt.zero_grad()
             rrdloss.backward()
             rrd_opt.step()
@@ -798,7 +799,14 @@ for step in range(int(args.numSteps)):
             # train Q-value networks
             samples = buff.sample(256)
 
-            # transform sample, prep for learning
+            # 'obs':self.obs[idx], 
+            # 'actions': self.actions[idx], 
+            # 'nextobs': self.obs[idx + 1], 
+            # 'dones': self.dones[idx + 1], 
+            # 'knowns': self.knownses[idx], 
+            # 'nextknowns': self.knownses[idx + 1], 
+            # 'rewards': self.rewards[idx]
+
             obSamp = np.array([samp['obs'] for samp in samples])
             actSamp = np.array([samp['actions'] for samp in samples])
             if len(actSamp.shape) < len(obSamp.shape):
@@ -809,30 +817,22 @@ for step in range(int(args.numSteps)):
                 donesSamp = donesSamp.cuda()
 
             with torch.no_grad():
-                # RRD features
                 feats = torch.tensor(np.concatenate((obSamp, actSamp, obSamp - nextObsSamp), axis=-1)).float()
-                # observation features (for actor network)
                 obsfeats = torch.tensor(nextObsSamp).float()
                 if(args.cuda):
                     feats = feats.cuda()
                     obsfeats = obsfeats.cuda()
-                # calculate expected rewards
                 rHat = rrder(feats)
-                # re-calculate action from current observation
                 nextActions, logdev, logprob = actor.get_action(obsfeats, debug=False, exploration=True)
-                # using updated action, predict Q values (NOT training networks here)
                 nextFeats = torch.concat([obsfeats, nextActions], dim=-1).float()
                 if args.cuda:
                     nextFeats = nextFeats.cuda()
                 qtarg1 = qf1_target(nextFeats)
                 qtarg2 = qf2_target(nextFeats)
                 qtargmin = torch.min(qtarg1, qtarg2) - (alpha * logprob)
-                
-                # target Q (label for Q value networks)
-                # see SAC paper for more detailed understanding
+                # print(qtargmin.shape, logprob.shape, donesSamp.shape)
                 qtarget = rHat + (args.gamma * (1 - donesSamp) * qtargmin)
             
-            # feats for Q value networks - training this time!
             feats = np.concatenate((obSamp, actSamp), axis=-1)
             feats1 = torch.tensor(feats).float()
             feats2 = torch.tensor(feats).float()
@@ -841,45 +841,46 @@ for step in range(int(args.numSteps)):
                 feats2 = feats2.cuda()
             qf1vals = qf1(feats1)
             qf2vals = qf2(feats2)
-
+            # if (trainstep % 99 == 0):
+            #     print(qtarget.shape(), qf1vals.sum())
+            # print(qf1vals.shape, qtarget.shape)
+            # print(torch.mean(nextActions), np.mean(actSamp))
             qf1loss = F.mse_loss(qf1vals, qtarget)
             qf2loss = F.mse_loss(qf2vals, qtarget)
             qfloss = qf1loss + qf2loss
-
+            # print(qfloss.item())
             q_opt.zero_grad()
             qfloss.backward()
+            # nn.utils.clip_grad_value_(qf1.parameters(), 1)
+            # nn.utils.clip_grad_value_(qf2.parameters(), 1)
             q_opt.step()
 
 
             # train actor network
 
-            # features for actor network
             obsfeat = torch.tensor(obSamp).float()
             if args.cuda:
                 obsfeat = obsfeat.cuda()
             actSamp, logdev, logprob = actor.get_action(obsfeat, exploration=True)
-            # features for Q value networks, using new action
             feats = torch.concat((obsfeat, actSamp), dim=-1).float()
             if args.cuda:
                 feats = feats.cuda()
-            # disable gradient computation for Q value networks
-            # can't use torch.no_grad because we NEED grad to backpropagate to actor
             for p1, p2 in zip(qf1.parameters(), qf2.parameters()):
                 p1.requires_grad = False
                 p2.requires_grad = False
             qf1vals = qf1(feats)
             qf2vals = qf2(feats)
-            # compute actor loss
             actloss = torch.mean((alpha * logprob) - torch.min(qf1vals, qf2vals))
-
+            # print((alpha * logprob).mean(), torch.min(qf1vals, qf2vals).mean())
+            # print(actloss.item())
             act_opt.zero_grad()
             actloss.backward()
+            # print(actloss.item(), qfloss.item())
+            # nn.utils.clip_grad_value_(actor.parameters(), 1)
             act_opt.step()
-            # re-enable gradient for q value nets
             for p1, p2 in zip(qf1.parameters(), qf2.parameters()):
                 p1.requires_grad = True
                 p2.requires_grad = True
-            # if we're learning alpha, update it here based on logprop from actor network and shape of action space
             if (args.alpha_lr > 0):
                 alpha_opt.zero_grad()
                 with torch.no_grad():
@@ -892,13 +893,20 @@ for step in range(int(args.numSteps)):
             # update target networks
             with torch.no_grad():
                 for qt1w, qf1w in zip(qf1_target.parameters(), qf1.parameters()):
+                    # print(qt1w.data.max(), qt1w.data.min())
                     qt1w.data.copy_(0.995 * qt1w.data + (.005 * qf1w.data))
+                    # print(qt1w.data.max(), qt1w.data.min())
+                    # print(qt1w.data)
+                    # qt1w.data = qf1w.data
                 for qt2w, qf2w in zip(qf2_target.parameters(), qf2.parameters()):
                     qt2w.data.copy_(0.995 * qt2w.data + (.005 * qf2w.data))
+                    # qt2w.data = qf2w.data
+
                 if args.statepred:
                     for spt, sp in zip(statepred_target.parameters(), statepred.parameters()):
                         spt.data.copy_(0.995 * spt.data + (.005 * sp.data))
-    # report current results
+            # if (step % 100) == 0:
+            #     print(actloss.item())
     if numSteps >= args.startLearningState:
         if (step % 50) == 0 or (step == args.numSteps - 1):
             if args.statepred:
@@ -909,23 +917,24 @@ for step in range(int(args.numSteps)):
                 statemodel = "NoFill"
             if args.contextSAC:
                 sacstr = f"{args.context}cSAC"
-            # folder + filenames based on experiment parameters
             foldern = f"./saved_mujoco/{args.env}/{sacstr}/{statemodel}/"
             fname = f"{args.numHidden}Hidden{args.seed}QLR{args.qlr}ALR{args.actlr}SLR{args.statelr}Start{args.startLearningState},{args.startLearning}HS{args.hiddenSizeLSTM}C{args.context}RST{args.policyResetStep}.csv"
-
-            # evaluate current policy 
             with torch.no_grad():
                 testrew, testloss = evaluatePolicy()
                 rewardList.append(testrew)
-            
-            # save state prediction losses to files
             if (args.statepred and args.logging):
+                
+                maxStateList.append(buff.maxStateVals)
+                minStateList.append(buff.minStateVals)
                 testStateLossList.append(testloss)
                 statelosslist.append(statePredLoss.item())
+                stateLossUnreducedList.append(stateLossUnreduced)
+
+                np.savetxt(f"{foldern}/statepredunreducedloss/{fname}", stateLossUnreducedList, newline="\n", delimiter=",")
                 np.savetxt(f"{foldern}/statepredtestloss/{fname}", testStateLossList, delimiter="\n")
                 np.savetxt(f"{foldern}/statepredloss/{fname}", statelosslist, delimiter="\n")
-
-            # print statistics to terminal
+                np.savetxt(f"{foldern}/staterange/MAX{fname}", maxStateList, newline="\n", delimiter=",")
+                np.savetxt(f"{foldern}/staterange/MIN{fname}", minStateList, newline="\n", delimiter=",")
             if not actloss is None:
                 if args.statepred:
                     print(f"Steps: {step * args.envSteps}, Time: {time.time() - starttime:.3f}s, Test rewards: {rewardList[-1]:.3f}, Actor loss: {actloss.item():.3e}, Q loss: {qfloss.item():.3e}, RRD loss: {rrdloss.item():.3e}, Alpha: {alpha:.3e}, StateLoss: {statePredLoss.item():.3e}, Test StateLoss: {testloss:.3e}")
@@ -935,9 +944,8 @@ for step in range(int(args.numSteps)):
                     print(f"Steps: {step * args.envSteps}, Time: {time.time() - starttime:.3f}s, Test rewards: {rewardList[-1]:.3f}, Actor loss: {actloss.item():.3e}, Q loss: {qfloss.item():.3e}, RRD loss: {rrdloss.item():.3e}, Alpha: {alpha:.3e}")    
             else:
                 print(rewardList[-1])
-
-            # save rewards, RRD, and SAC losses to files
             if (args.logging):
+                
                 np.savetxt(f"{foldern}/rewards/{fname}", rewardList, delimiter="\n")
                 if not actloss is None:
                     actlosslist.append(actloss.item())

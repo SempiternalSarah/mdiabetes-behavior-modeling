@@ -1,0 +1,12 @@
+#!/bin/bash
+#SBATCH --partition=computelong
+#SBATCH --job-name=mdiabetesMujoco$1
+#SBATCH --time=80:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=48000M
+#SBATCH --account=ailab
+module load miniconda
+conda activate mdiabetes
+srun --error /home/abutler9/ailab/mdiabetes-behavior-modeling/saved_mujoco/E${1}H${2}Sd${3}SP${4}.err --output /home/abutler9/ailab/mdiabetes-behavior-modeling/saved_mujoco/E${1}H${2}Sd${3}SP${4}.out python /home/abutler9/ailab/mdiabetes-behavior-modeling/REDOPREDS_mujoco_exp.py --numSteps 40000 --startLearning 100000 --stateTrainMult 3 --hiddenSizeLSTM 64 --cuda False --env $1 --logging True --numHidden $2 --seed $3 --statepred $4 --redopreds 1

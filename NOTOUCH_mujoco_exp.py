@@ -43,6 +43,7 @@ parser.add_argument("--statemodel", type=str, default="lstm")
 parser.add_argument("--numBreaks", type=int, default=4, help="Minibatches for state pred training")
 parser.add_argument("--stateTrainMult", type=int, default=1, help="Multiplier for state learning epochs")
 parser.add_argument("--hiddenSizeLSTM", type=int, default=64)
+parser.add_argument("--policyResetStep", type=int, default=-1, help="No. algorithmic steps at which to reset the policy")
 
 
 
@@ -79,59 +80,6 @@ class Trajectory:
         # print(self.obs.shape, self.actions.shape, self.rewards.shape)
         self.length = len(actions)
 
-    def getElementWithContext(self, idx):
-        # print(idx, self.length)
-        if args.contextSAC:
-            start = max(idx + 1 - args.context, 0)
-        else:
-            start = idx
-        return {
-            'obs': torch.tensor(self.obs[start:idx + 1]), 
-            'actions': torch.tensor(self.actions[start:idx + 1]), 
-            'nextobs': torch.tensor(self.obs[start+1:idx + 2]), 
-            'dones': self.dones[idx + 1], 
-            'rewards': self.rewards[idx]}
-    
-    def sampleWithContext(self, size):
-        idxs = np.random.choice(self.length, size, replace = size>self.length)
-        lens = np.where(idxs - args.context >=0, args.context, idxs + 1)
-        # idxs = torch.tensor(idxs)
-
-        # elements requiring context
-        obs = torch.zeros([args.context, size, self.obs[0].shape[0]]).float()
-        actions = torch.zeros([args.context, size, self.actions[0].shape[0]]).float()
-        nextobs = torch.zeros([args.context, size, self.obs[0].shape[0]]).float()
-        # efficiently fill tensors
-        for x in range(1, args.context + 1):
-            offset = args.context - x
-            mask = np.where(idxs - offset >= 0, True, False)
-            obs[x - 1, mask] += torch.tensor(self.obs[idxs[mask]]).float()
-            actions[x - 1, mask] += torch.tensor(self.actions[idxs[mask]]).float()
-            nextobs[x - 1, mask] += torch.tensor(self.obs[idxs[mask] + 1]).float()
-        # elements not requiring context
-        temp = obs == 0
-        rewards = [np.mean(self.rewards)]
-        dones = self.dones[idxs + 1]
-        
-        return {
-            'obs': obs, 
-            'actions': actions, 
-            'nextobs': nextobs, 
-            'dones': dones,
-            'rewards': rewards,
-            'lens': lens}
-            # 'rewards': self.rewards}
-    
-    def retrieveStateFeatures(self, idx):
-        mindx = max(idx - args.context, 0)
-        obs = self.obs[mindx:idx + 1]
-        acts = self.actions[mindx:idx + 1]
-        labels = np.copy(self.obs[idx + 1]) - self.obs[idx]
-        feats = np.concatenate([obs, acts], axis=1)
-        knowns = self.knownses[idx + 1]
-        
-        return feats, labels, knowns
-    
     def getElement(self, idx):
         # print(idx, self.length)
         return {
@@ -158,16 +106,24 @@ class Trajectory:
             'nextknowns': self.knownses[idxs + 1], 
             'rewards': [np.mean(self.rewards)]}
             # 'rewards': self.rewards}
+    
+    def retrieveStateFeatures(self, idx):
+        mindx = max(idx - args.context, 0)
+        obs = self.obs[mindx:idx + 1]
+        acts = self.actions[mindx:idx + 1]
+        labels = np.copy(self.obs[idx + 1]) - self.obs[idx]
+        feats = np.concatenate([obs, acts], axis=1)
+        knowns = self.knownses[idx + 1]
+        return feats, labels, knowns
 
 
 
 class Buffer:
-    # keep track of max/min state component values observed
-    maxStateVals = None
-    minStateVals = None
     def __init__(self, numElements):
         self.n = numElements
         self.count = 0
+        self.minStateVals = None
+        self.maxStateVals = None
         self.els = []
         self.splits = []
 
@@ -180,6 +136,7 @@ class Buffer:
         else:
             self.maxStateVals = np.maximum(self.maxStateVals, tempObsMax)
             self.minStateVals = np.minimum(self.minStateVals, tempObsMin)
+
         e = Trajectory(obs, act, rew, dones, knownses)
         self.els.append(e)
         self.count += e.length
@@ -194,11 +151,11 @@ class Buffer:
             self.splits = self.splits[1:]
             self.splits = list(map(lambda x: x - temp.length, self.splits))
 
-    def sampleForSAC(self, size):
+    def sample(self, size):
         idxs = np.random.choice(self.count, size, replace = size>self.count)
         idxs = sorted(idxs)
         i = 0
-        toReturn = {}
+        toReturn = []
         for idx in idxs:
             while (idx >= self.splits[i]):
                 i += 1
@@ -208,25 +165,10 @@ class Buffer:
                 offset = self.splits[i - 1]
             if (idx - offset) < 0:
                 print("ERRORR!!!!!!! Buffer index offset wrong")
-            temp = self.els[i].getElement(idx - offset)
-            for key in temp.keys():
-                if key in toReturn:
-                    # print("HAS", i)
-                    # print(toReturn[key].shape)
-                    toReturn[key].append(temp[key])
-                else:
-                    # print("HASNOT", i)
-                    toReturn[key] = [temp[key]]
-
-        for key in ['obs', 'actions', 'nextobs']:
-            toReturn[key] = torch.tensor(np.array(toReturn[key]))
-        rrdfeats = torch.cat([toReturn['obs'], toReturn['actions'], toReturn['nextobs'] - toReturn['obs']], dim=-1).float()
-        qfeats = torch.cat([toReturn['obs'], toReturn['actions']], dim=-1).float()
-        actfeats = toReturn['obs'].float()
-        # print("SAC:", rrdfeats.shape, qfeats.shape, actfeats.shape)
-        return rrdfeats, qfeats, actfeats, torch.tensor(toReturn['dones']).int().unsqueeze(-1)
+            toReturn.append(self.els[i].getElement(idx - offset))
+        return toReturn
     
-    def sampleForRRD(self, subLen, numSubs):
+    def sampleSubSeqs(self, subLen, numSubs):
         idxs = np.random.choice(len(self.els), numSubs, replace = numSubs>len(self.els))
         toReturn = {}
         # print(idxs, "!!")
@@ -241,115 +183,10 @@ class Buffer:
                     # print("HASNOT", i)
                     toReturn[key] = [temp[key]]
                     # print(toReturn[key])
-        for key in ['obs', 'actions', 'nextobs']:
-            toReturn[key] = torch.tensor(np.array(toReturn[key]))
-        feats = torch.cat([toReturn['obs'], toReturn['actions'], toReturn['nextobs'] - toReturn['obs']], dim=-1).float()
-        rews = torch.tensor(np.array(toReturn['rewards'])).float()
-        return feats, rews
-
-    def sampleForOnlineDT(self, size):
-        idxs = np.random.choice(self.count, size, replace = size>self.count)
-        idxs = sorted(idxs)
-        i = 0
-        toReturn = {}
-        for idx in idxs:
-            while (idx >= self.splits[i]):
-                i += 1
-            if i == 0:
-                offset = 0
-            else:
-                offset = self.splits[i - 1]
-            if (idx - offset) < 0:
-                print("ERRORR!!!!!!! Buffer index offset wrong")
-            temp = self.els[i].getElementWithContext(idx - offset)
-            for key in temp.keys():
-                if key in toReturn:
-                    # print("HAS", i)
-                    # print(toReturn[key].shape)
-                    toReturn[key].append(temp[key])
-                else:
-                    # print("HASNOT", i)
-                    toReturn[key] = [temp[key]]
-                    # print(toReturn[key])
-        lens = [len(obs) for obs in toReturn['obs']]
-        lens = torch.tensor(lens).int()
-        # print(lens)
-        for key in toReturn:
-            if isinstance(toReturn[key][0], torch.Tensor):
-                toReturn[key] = torch.nn.utils.rnn.pad_sequence(toReturn[key]).float()
-
-        actions = toReturn['actions']
-        obs = toReturn['obs']
-        rewards = toReturn['rewards']
-        # print("SAC:", rrdfeats.shape, qfeats.shape, actfeats.shape)
-        return obs, actions, rewards
-
-    def sampleForContextSAC(self, size):
-        idxs = np.random.choice(self.count, size, replace = size>self.count)
-        idxs = sorted(idxs)
-        i = 0
-        toReturn = {}
-        for idx in idxs:
-            while (idx >= self.splits[i]):
-                i += 1
-            if i == 0:
-                offset = 0
-            else:
-                offset = self.splits[i - 1]
-            if (idx - offset) < 0:
-                print("ERRORR!!!!!!! Buffer index offset wrong")
-            temp = self.els[i].getElementWithContext(idx - offset)
-            for key in temp.keys():
-                if key in toReturn:
-                    # print("HAS", i)
-                    # print(toReturn[key].shape)
-                    toReturn[key].append(temp[key])
-                else:
-                    # print("HASNOT", i)
-                    toReturn[key] = [temp[key]]
-                    # print(toReturn[key])
-        lens = [len(obs) for obs in toReturn['obs']]
-        lens = torch.tensor(lens).int()
-        # print(lens)
-        for key in toReturn:
-            if isinstance(toReturn[key][0], torch.Tensor):
-                toReturn[key] = torch.nn.utils.rnn.pad_sequence(toReturn[key]).float()
-
-        rrdfeats = torch.cat([toReturn['obs'], toReturn['actions'], toReturn['nextobs'] - toReturn['obs']], dim=-1).float()
-        qfeats = torch.cat([toReturn['obs'], toReturn['actions']], dim=-1).float()
-        actfeats = toReturn['obs']
-        # print("SAC:", rrdfeats.shape, qfeats.shape, actfeats.shape)
-        return rrdfeats, qfeats, actfeats, torch.tensor(toReturn['dones']).int().unsqueeze(-1), lens
-    
-    def sampleForContextRRD(self, subLen, numSubs):
-        idxs = np.random.choice(len(self.els), numSubs, replace = numSubs>len(self.els))
-        toReturn = {}
-        # print(idxs, "!!")
-        for i in idxs:
-            temp = self.els[i].sampleWithContext(subLen)
-            for key in temp.keys():
-                if key in toReturn:
-                    # print("HAS", i)
-                    # print(toReturn[key].shape)
-                    toReturn[key].append(temp[key])
-                else:
-                    # print("HASNOT", i)
-                    toReturn[key] = [temp[key]]
-                    # print(toReturn[key])
-        for key in toReturn:
-            if isinstance(toReturn[key][0], torch.Tensor):
-                toReturn[key] = torch.stack(toReturn[key], dim=1)
-
-        
-        feats = torch.cat([toReturn['obs'], toReturn['actions'], toReturn['nextobs'] - toReturn['obs']], dim=-1).float()
-        rews = torch.tensor(np.array(toReturn['rewards'])).float()
-        lens = torch.tensor(np.array(toReturn['lens'])).int()
-        # print("RRD:", feats.shape, rews.shape, lens.shape)
-        # print ("FIRST RRD:", feats.shape)
-        return feats, rews, lens 
+        return toReturn
     
     def sampleForStatePred(self, size):
-        idxs = np.random.choice(self.count, size, replace = size > self.count)
+        idxs = np.random.choice(self.count, size, replace = size>self.count)
         idxs = sorted(idxs)
         i = 0
         returnFeats, returnLabs, returnKnowns = [], [], []
@@ -368,38 +205,7 @@ class Buffer:
             returnKnowns.append(tknown)
         lengths = [len(feat) for feat in returnFeats]
         # shape is (sequence, batch, features)
-        feats = torch.nn.utils.rnn.pad_sequence(returnFeats).float()
-        # print("STATE:", feats.shape)
-        return feats, np.stack(returnLabs, axis=0), np.stack(returnKnowns, axis=0), lengths
-    
-    def sampleForDTStatePred(self, size):
-        idxs = np.random.choice(self.count, size, replace = size>self.count)
-        idxs = sorted(idxs)
-        i = 0
-        returnObs, returnActs, returnLabs, returnKnowns = [], [], []
-        for idx in idxs:
-            while (idx >= self.splits[i]):
-                i += 1
-            if i == 0:
-                offset = 0
-            else:
-                offset = self.splits[i - 1]
-            if (idx - offset) < 0:
-                print("ERRORR!!!!!!! Buffer index offset wrong")
-            tobs, tact, tlab, tknown = self.els[i].retrieveStateDTFeatures(idx - offset)
-            returnObs.append(torch.tensor(tobs))
-            returnActs.append(torch.tensor(tact))
-            returnLabs.append(tlab)
-            returnKnowns.append(tknown)
-        lengths = [len(feat) for feat in tobs]
-        # shape is (sequence, batch, features)
-        obs = torch.nn.utils.rnn.pad_sequence(returnObs).float()
-        acts = torch.nn.utils.rnn.pad_sequence(returnActs).float()
-        mask = torch.zeros_like(obs).float()
-        for idx, l in enumerate(lengths):
-            mask[:l, idx, :] = 1
-        # print("STATE:", feats.shape)
-        return obs, acts, np.stack(returnLabs, axis=0), np.stack(returnKnowns, axis=0), mask
+        return torch.nn.utils.rnn.pad_sequence(returnFeats).float(), np.stack(returnLabs, axis=0), np.stack(returnKnowns, axis=0), lengths
 
 
 def layer_init(layer, bias_const=0.1):
@@ -426,13 +232,13 @@ class StateLSTMNetwork(nn.Module):
         output = self.attnlayer(output, output, output)[0][-1]
         output = torch.relu(output)
         output = self.outlayer(output)
-        if not mins is None:
-            mins = torch.tensor(mins)
-            maxes = torch.tensor(maxes)
-            if args.cuda:
-                mins = mins.cuda()
-                maxes = maxes.cuda()
-            output = torch.clamp(output, mins, maxes)
+        # if not mins is None:
+        #     mins = torch.tensor(mins)
+        #     maxes = torch.tensor(maxes)
+        #     if args.cuda:
+        #         mins = mins.cuda()
+        #         maxes = maxes.cuda()
+        #     output = torch.clamp(output, mins, maxes)
         return output
     
 class StateNNNetwork(nn.Module):
@@ -470,16 +276,8 @@ class SoftQNetwork(nn.Module):
         self.fc_q = layer_init(nn.Linear(hiddenSize, 1))
 
     def forward(self, x):
-        if (args.contextSAC):
-            x, (H, C) = self.lstm(x)
-        else:
-            x = F.relu(self.fc1(x))
-            x = self.fc2(x)
-        if isinstance(x, torch.nn.utils.rnn.PackedSequence):
-            x = torch.nn.utils.rnn.pad_packed_sequence(x)[0]
-            x = x[-1, :, :]
-        elif args.contextSAC:
-            x = x[-1, :].unsqueeze(0)
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
         x = F.relu(x)
         q_vals = self.fc_q(x)
         return q_vals
@@ -493,26 +291,14 @@ class Actor(nn.Module):
         self.action_scale = torch.tensor((envs.action_space.high - envs.action_space.low) / 2.0).float()
         if args.cuda:
             self.action_scale = self.action_scale.cuda()
-        if (args.contextSAC):
-            hiddenSize = args.hiddenSizeLSTM
-            self.lstm = nn.LSTM(self.obs_shape[0], hiddenSize)
-        else:
-            hiddenSize = 256
-            self.fc1 = layer_init(nn.Linear(self.obs_shape[0], hiddenSize))
-            self.fc2 = layer_init(nn.Linear(hiddenSize, hiddenSize))
+        hiddenSize = 256
+        self.fc1 = layer_init(nn.Linear(self.obs_shape[0], hiddenSize))
+        self.fc2 = layer_init(nn.Linear(hiddenSize, hiddenSize))
         self.fc_mean_logdev = layer_init(nn.Linear(hiddenSize, 2*self.action_shape[0]))
 
     def forward(self, x):
-        if (args.contextSAC):
-            x, (H, C) = self.lstm(x)
-        else:
-            x = F.relu(self.fc1(x))
-            x = self.fc2(x)
-        if isinstance(x, torch.nn.utils.rnn.PackedSequence):
-            x = torch.nn.utils.rnn.pad_packed_sequence(x)[0]
-            x = x[-1, :, :]
-        elif args.contextSAC:
-            x = x[-1, :].unsqueeze(0)
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
         x = F.relu(x)
         temp = self.fc_mean_logdev(x)
         mean = temp[:, :self.action_shape[0]]
@@ -561,28 +347,15 @@ class RRDModel(nn.Module):
     def __init__(self, envs):
         super().__init__()
         self.input_shape = 2 * envs.observation_space.shape[0] + envs.action_space.shape[0]
-        if (args.contextSAC):
-            contextSize = args.hiddenSizeLSTM
-            self.lstm = nn.LSTM(self.input_shape, contextSize)
-        else:
-            contextSize = 256
-            self.fc1 = layer_init(nn.Linear(self.input_shape, contextSize))
-            self.fc2 = layer_init(nn.Linear(contextSize, contextSize))
+        contextSize = 256
+        self.fc1 = layer_init(nn.Linear(self.input_shape, contextSize))
+        self.fc2 = layer_init(nn.Linear(contextSize, contextSize))
         self.fc3 = layer_init(nn.Linear(contextSize, 1))
 
     def forward(self, x):
-        if (args.contextSAC):
-            out, (h, c) = self.lstm(x)
-                # only use last prediction to keep context length consistent
-        else:
-            out = self.fc1(x)
-            out = F.relu(out)
-            out = self.fc2(out)
-        if isinstance(out, torch.nn.utils.rnn.PackedSequence):
-            out = torch.nn.utils.rnn.pad_packed_sequence(out)[0]
-            out = out[-1, :, :]
-        elif args.contextSAC:
-            out = out[-1, :].unsqueeze(0)
+        out = self.fc1(x)
+        out = F.relu(out)
+        out = self.fc2(out)
         out = F.relu(out)
         out = self.fc3(out)
         return out
@@ -655,9 +428,7 @@ def obsFilter(observation, numHidden, lastKnown, leftTilRandom):
     return observation, np.ones_like(observation), leftTilRandom
 
 def getStateBelief(observations, knowns, acts=None, statepred = None, mins=None, maxes=None):
-    if (args.numHidden < 1) or (not args.statefill):
-        return observations[-1]
-    elif args.statepred:
+    if args.statepred:
         obsfeat = torch.tensor(np.concatenate([observations, acts], axis=-1)).float()
         obsfeat = obsfeat.unsqueeze_(1)
         if args.cuda:
@@ -669,18 +440,8 @@ def getStateBelief(observations, knowns, acts=None, statepred = None, mins=None,
         else:
             toReturn = toReturn.detach().numpy()
         return toReturn + observations[-1]
-    observations = observations[-1]
-    if len(observations.shape) > 2:
-        print(observations.shape)
-        print("OBS SHAPE INCORRECT!!!!")
-    else:
-        latest = observations[0]
-        for x in range(1, len(observations)):
-            # update latest knowledge
-            latest = (knowns[x] * observations[x]) + ((1 - knowns[x]) * latest)
-            # update observation with latest knowledge
-            observations[x] = latest
-    return observations
+    
+    return observations[-1]
 
 
 random.seed(args.seed)
@@ -799,7 +560,10 @@ def evaluatePolicy(numRollouts=10):
             actbuff.append(testaction)
             nextObsPred = getStateBelief(obsbuff[-start:], knowns, actbuff[-start:], statepred, mins=buff.minStateVals, maxes=buff.maxStateVals)
             nextobs, knowns, hiddenLeft = obsFilter(nextobsUn, args.numHidden, knowns, hiddenLeft)
+            # print(nextobs)
+            # print(nextobsUn)
             testobs = (knowns * nextobs) + ((1 - knowns) * (nextObsPred))
+            # print(testobs)
             testObsIdxs = (1 - knowns) != 0
             # don't track timesteps where num hidden is 0 (first observation)
             if testObsIdxs.sum() > 0:
@@ -847,15 +611,11 @@ if (args.logging and args.seed == 1):
 
 rewardSet = []
 rewardList = []
-maxStateList = []
-minStateList = []
 testStateLossList = []
-testStateLossUnreducedList = []
 qflosslist = []
 actlosslist = []
 rrdlosslist = []
 statelosslist = []
-stateLossUnreducedList = []
 
 buff = Buffer(args.bufferSize)
 
@@ -878,6 +638,38 @@ qfloss = None
 starttime = time.time()
 
 for step in range(int(args.numSteps)):
+    if step == args.policyResetStep:
+        qf1 = SoftQNetwork(env)
+        qf2 = SoftQNetwork(env)
+        qf1_target = SoftQNetwork(env)
+        qf2_target = SoftQNetwork(env)
+        if args.cuda:
+            actor = actor.cuda()
+            qf1 = qf1.cuda()
+            qf2 = qf2.cuda()
+            qf1_target = qf1_target.cuda()
+            qf2_target = qf2_target.cuda()
+            if (args.statepred):
+                statepred = statepred.cuda()
+                statepred_target = statepred_target.cuda()
+                statepred_target.load_state_dict(statepred.state_dict())
+        for p1, p2 in zip(qf1_target.parameters(), qf2_target.parameters()):
+            p1.requires_grad = False
+            p2.requires_grad = False
+        if (args.alpha_lr > 0):
+            logalpha = torch.tensor(0).float()
+            if (args.cuda):
+                logalpha = logalpha.cuda()
+            logalpha.requires_grad = True
+            alpha_opt = optim.Adam([logalpha], lr=args.alpha_lr)
+            alpha = torch.exp(logalpha)
+        else: 
+            alpha = args.alpha
+        qf1_target.load_state_dict(qf1.state_dict())
+        qf2_target.load_state_dict(qf2.state_dict())
+        q_opt = optim.Adam(list(qf1.parameters()) + list(qf2.parameters()), lr=args.qlr)
+        act_opt = optim.Adam(list(actor.parameters()), lr=args.actlr)
+
     for envStep in range(args.envSteps):
         with torch.no_grad():
             start = min(args.context, len(obs))
@@ -970,28 +762,26 @@ for step in range(int(args.numSteps)):
             # 'knowns': self.knownses[idx], 
             # 'nextknowns': self.knownses[idx + 1], 
             # 'rewards': self.rewards[idx]
-            if args.contextSAC:
-                feats, labels, lens = buff.sampleForContextRRD(64, 4)
-                # reshape to have only one batch dimension (necessary for LSTM)
-                toReshape = [feats.shape[1], feats.shape[2]]
-                lens = lens.reshape([feats.shape[1] * feats.shape[2]])
-                feats = feats.reshape([feats.shape[0], feats.shape[1] * feats.shape[2], feats.shape[3]])
-                # print(feats.shape, lens.shape)
-                feats = torch.nn.utils.rnn.pack_padded_sequence(feats, lens, enforce_sorted=False)
-            else:
-                feats, labels = buff.sampleForRRD(64, 4)
+            samples = buff.sampleSubSeqs(64, 4)
+            obSamp = np.array(samples['obs'])
+            actSamp = np.array(samples['actions'])
+            if len(actSamp.shape) < len(obSamp.shape):
+                actSamp = np.expand_dims(actSamp, -1)
+            ob2Samp = np.array(samples['nextobs'])
+            rewSamp = np.array(samples['rewards'])
+            knownSamp = np.array(samples['knowns'])
+            # print(obSamp.shape, actSamp.shape, rewSamp.shape, knownSamp.shape)
+            feats = torch.tensor(np.concatenate((obSamp, actSamp, obSamp - ob2Samp), axis=-1)).float()
             if args.cuda:
                 feats = feats.cuda()
             
             rHat = rrder(feats).squeeze(-1)
-            # reshape back to reconstruct sequences
-            if len(rHat.shape) == 1:
-                rHat = rHat.reshape(toReshape)
-            # print(rHat.shape)
+
             episodicSums = torch.mean(rHat, dim=-1, keepdim=True)
             # print(episodicSums.shape, rewSamp.shape, feats.shape, rHat.shape)
             # print(rewSamp)
             # print(episodicSums.shape, rewSamp.shape)
+            labels = torch.tensor(rewSamp).float()
             if args.cuda:
                 labels = labels.cuda()
             rrdloss = F.mse_loss(episodicSums, labels)
@@ -1003,50 +793,50 @@ for step in range(int(args.numSteps)):
             rrd_opt.step()
 
             # train Q-value networks
-            if args.contextSAC:
-                rdfeats, qfeats, actfeats, donesamp, lens = buff.sampleForContextSAC(256)
-                actfeats = torch.nn.utils.rnn.pack_padded_sequence(actfeats, lens, enforce_sorted=False)
-                rdfeats = torch.nn.utils.rnn.pack_padded_sequence(rdfeats, lens, enforce_sorted=False)
-            else:
-                rdfeats, qfeats, actfeats, donesamp = buff.sampleForSAC(256)
+            samples = buff.sample(256)
 
+            # 'obs':self.obs[idx], 
+            # 'actions': self.actions[idx], 
+            # 'nextobs': self.obs[idx + 1], 
+            # 'dones': self.dones[idx + 1], 
+            # 'knowns': self.knownses[idx], 
+            # 'nextknowns': self.knownses[idx + 1], 
+            # 'rewards': self.rewards[idx]
+
+            obSamp = np.array([samp['obs'] for samp in samples])
+            actSamp = np.array([samp['actions'] for samp in samples])
+            if len(actSamp.shape) < len(obSamp.shape):
+                actSamp = np.expand_dims(actSamp, -1)
+            nextObsSamp = np.array([samp['nextobs'] for samp in samples])
+            donesSamp = torch.tensor([samp['dones'] for samp in samples]).float().unsqueeze(-1)
             if args.cuda:
-                donesamp = donesamp.cuda()
-                rdfeats = rdfeats.cuda()
-                qfeats = qfeats.cuda()
-                actfeats = actfeats.cuda()
+                donesSamp = donesSamp.cuda()
 
             with torch.no_grad():
-                rHat = rrder(rdfeats)
-                # print(rdfeats.shape)
-                nextActions, logdev, logprob = actor.get_action(actfeats, debug=False, exploration=True)
-                nextFeats = qfeats.detach().clone()
-                if args.contextSAC:
-                    nextFeats[-1, :, -nextActions.shape[-1]:] -= nextFeats[-1, :, -nextActions.shape[-1]:]
-                    nextFeats[-1, :, -nextActions.shape[-1]:] += nextActions
-                    nextFeats = torch.nn.utils.rnn.pack_padded_sequence(nextFeats, lens, enforce_sorted=False)
-                else:
-                    # print(nextActions.shape, nextFeats.shape)
-                    nextFeats[:, -nextActions.shape[-1]:] -= nextFeats[:, -nextActions.shape[-1]:]
-                    nextFeats[:, -nextActions.shape[-1]:] += nextActions
+                feats = torch.tensor(np.concatenate((obSamp, actSamp, obSamp - nextObsSamp), axis=-1)).float()
+                obsfeats = torch.tensor(nextObsSamp).float()
+                if(args.cuda):
+                    feats = feats.cuda()
+                    obsfeats = obsfeats.cuda()
+                rHat = rrder(feats)
+                nextActions, logdev, logprob = actor.get_action(obsfeats, debug=False, exploration=True)
+                nextFeats = torch.concat([obsfeats, nextActions], dim=-1).float()
                 if args.cuda:
                     nextFeats = nextFeats.cuda()
                 qtarg1 = qf1_target(nextFeats)
                 qtarg2 = qf2_target(nextFeats)
-                # print(qtarg1.shape)
-                # print(nextFeats.shape, qtarg1.shape, logprob.shape)
                 qtargmin = torch.min(qtarg1, qtarg2) - (alpha * logprob)
                 # print(qtargmin.shape, logprob.shape, donesSamp.shape)
-                qtarget = rHat + (args.gamma * (1 - donesamp) * qtargmin)
+                qtarget = rHat + (args.gamma * (1 - donesSamp) * qtargmin)
             
-            if args.contextSAC:
-                qfeatnow = torch.nn.utils.rnn.pack_padded_sequence(qfeats, lens, enforce_sorted=False)
-            else:
-                qfeatnow = qfeats.detach().clone()
-            qf1vals = qf1(qfeatnow)
-            # print(qfeatnow.shape, qf1vals.shape, qtarget.shape)
-            # print(qf1vals.shape)
-            qf2vals = qf2(qfeatnow)
+            feats = np.concatenate((obSamp, actSamp), axis=-1)
+            feats1 = torch.tensor(feats).float()
+            feats2 = torch.tensor(feats).float()
+            if args.cuda:
+                feats1 = feats1.cuda()
+                feats2 = feats2.cuda()
+            qf1vals = qf1(feats1)
+            qf2vals = qf2(feats2)
             # if (trainstep % 99 == 0):
             #     print(qtarget.shape(), qf1vals.sum())
             # print(qf1vals.shape, qtarget.shape)
@@ -1061,35 +851,21 @@ for step in range(int(args.numSteps)):
             # nn.utils.clip_grad_value_(qf2.parameters(), 1)
             q_opt.step()
 
-            # with torch.no_grad():
-            #     qf1vals = qf1(feats)
-            #     qf2vals = qf2(feats)
-            #     qf1loss = F.mse_loss(qf1vals, qtarget)
-            #     qf2loss = F.mse_loss(qf2vals, qtarget)
-            #     qfloss = qf1loss + qf2loss
-            #     print(qfloss.item())
 
             # train actor network
 
-            actSamp, logdev, logprob = actor.get_action(actfeats, exploration=True)
-            nextFeats = qfeats.detach().clone()
-            # print(actSamp.shape)
-            if args.contextSAC:
-                with torch.no_grad():
-                    nextFeats[-1, :, -actSamp.shape[-1]:] -= nextFeats[-1, :, -actSamp.shape[-1]:]
-                nextFeats[-1, :, -actSamp.shape[-1]:] += actSamp
-                nextFeats = torch.nn.utils.rnn.pack_padded_sequence(nextFeats, lens, enforce_sorted=False)
-            else:
-                with torch.no_grad():
-                    nextFeats[:, -actSamp.shape[-1]:] -= nextFeats[:, -actSamp.shape[-1]:]
-                nextFeats[:, -actSamp.shape[-1]:] += actSamp
+            obsfeat = torch.tensor(obSamp).float()
             if args.cuda:
-                nextFeats = nextFeats.cuda()
+                obsfeat = obsfeat.cuda()
+            actSamp, logdev, logprob = actor.get_action(obsfeat, exploration=True)
+            feats = torch.concat((obsfeat, actSamp), dim=-1).float()
+            if args.cuda:
+                feats = feats.cuda()
             for p1, p2 in zip(qf1.parameters(), qf2.parameters()):
                 p1.requires_grad = False
                 p2.requires_grad = False
-            qf1vals = qf1(nextFeats)
-            qf2vals = qf2(nextFeats)
+            qf1vals = qf1(feats)
+            qf2vals = qf2(feats)
             actloss = torch.mean((alpha * logprob) - torch.min(qf1vals, qf2vals))
             # print((alpha * logprob).mean(), torch.min(qf1vals, qf2vals).mean())
             # print(actloss.item())
@@ -1138,23 +914,20 @@ for step in range(int(args.numSteps)):
             if args.contextSAC:
                 sacstr = f"{args.context}cSAC"
             foldern = f"./saved_mujoco/{args.env}/{sacstr}/{statemodel}/"
-            fname = f"{args.numHidden}Hidden{args.seed}QLR{args.qlr}ALR{args.actlr}SLR{args.statelr}Start{args.startLearningState},{args.startLearning}HS{args.hiddenSizeLSTM}C{args.context}.csv"
+            fname = f"{args.numHidden}Hidden{args.seed}QLR{args.qlr}ALR{args.actlr}SLR{args.statelr}Start{args.startLearningState},{args.startLearning}HS{args.hiddenSizeLSTM}C{args.context}RST{args.policyResetStep}.csv"
             with torch.no_grad():
                 testrew, testloss = evaluatePolicy()
                 rewardList.append(testrew)
             if (args.statepred and args.logging):
                 
-                maxStateList.append(buff.maxStateVals)
-                minStateList.append(buff.minStateVals)
+                # maxStateList.append(buff.maxStateVals)
+                # minStateList.append(buff.minStateVals)
                 testStateLossList.append(testloss)
                 statelosslist.append(statePredLoss.item())
-                stateLossUnreducedList.append(stateLossUnreduced)
-
-                np.savetxt(f"{foldern}/statepredunreducedloss/{fname}", stateLossUnreducedList, newline="\n", delimiter=",")
                 np.savetxt(f"{foldern}/statepredtestloss/{fname}", testStateLossList, delimiter="\n")
                 np.savetxt(f"{foldern}/statepredloss/{fname}", statelosslist, delimiter="\n")
-                np.savetxt(f"{foldern}/staterange/MAX{fname}", maxStateList, newline="\n", delimiter=",")
-                np.savetxt(f"{foldern}/staterange/MIN{fname}", minStateList, newline="\n", delimiter=",")
+                # np.savetxt(f"{foldern}/staterange/MAX{fname}", maxStateList, newline="\n", delimiter=",")
+                # np.savetxt(f"{foldern}/staterange/MIN{fname}", minStateList, newline="\n", delimiter=",")
             if not actloss is None:
                 if args.statepred:
                     print(f"Steps: {step * args.envSteps}, Time: {time.time() - starttime:.3f}s, Test rewards: {rewardList[-1]:.3f}, Actor loss: {actloss.item():.3e}, Q loss: {qfloss.item():.3e}, RRD loss: {rrdloss.item():.3e}, Alpha: {alpha:.3e}, StateLoss: {statePredLoss.item():.3e}, Test StateLoss: {testloss:.3e}")

@@ -13,5 +13,5 @@ module load miniconda
 module load racs-eb/1
 module load Mesa/17.2.5-foss-2017b
 conda activate mdiabetes
-srun python /home/abutler9/ailab/mdiabetes-behavior-modeling/mdiabetes_rl_exp.py --cuda False --logging True --seed $1 --statepred $2
+srun python /home/abutler9/ailab/mdiabetes-behavior-modeling/mdiabetes_rl_exp.py --cuda False --logging True --seed $1 --statepred $2 --endQPred $3
 

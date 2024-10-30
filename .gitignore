@@ -14,7 +14,10 @@ data/
 *.zip
 **/TEMP
 *.pt
-CONTAINMENTZONE/**
-saved_data/**
-saved_mujoco/**
-saved_mdiabetes_rl/**
+**/CONTAINMENTZONE
+**/containmentzone2
+**/containmentzone3
+**/MJGraphs 
+**/saved_data
+**/saved_mujoco
+**/saved_mdiabetes_rl
